@@ -62,4 +62,62 @@ function generateAlerts() {
     return alertCount;
 }
 
-module.exports = { generateAlerts };
+/**
+ * Check recent events against user watchlists
+ */
+function checkWatchlists() {
+    const db = getDb();
+
+    // Get all active watchlists
+    const watchlists = db.prepare('SELECT * FROM watchlists WHERE is_active = 1').all();
+    if (watchlists.length === 0) return 0;
+
+    let triggerCount = 0;
+    const now = new Date();
+    // Look back 24 hours for mentions
+    const since = new Date(now.getTime() - (24 * 60 * 60 * 1000)).toISOString().replace('T', ' ').replace('Z', '');
+
+    const countStmt = db.prepare(`
+        SELECT COUNT(*) as count FROM events 
+        WHERE (LOWER(title) LIKE '%' || ? || '%' OR LOWER(summary) LIKE '%' || ? || '%')
+        AND created_at >= ?
+    `);
+
+    const updateWatchlist = db.prepare('UPDATE watchlists SET last_triggered_at = ? WHERE id = ?');
+    const insertAlert = db.prepare(`
+        INSERT INTO alerts (id, event_id, type, message, is_read, created_at)
+        VALUES (?, ?, 'CRITICAL', ?, 0, ?)
+    `);
+
+    for (const wl of watchlists) {
+        const result = countStmt.get(wl.keyword, wl.keyword, since);
+
+        // If mentions exceed threshold and hasn't been triggered in the last hour
+        const lastTriggered = wl.last_triggered_at ? new Date(wl.last_triggered_at) : new Date(0);
+        const hoursSinceTrigger = (now - lastTriggered) / (1000 * 60 * 60);
+
+        if (result.count >= wl.threshold && hoursSinceTrigger > 1) {
+            // Find the most recent event matching this to attach to
+            const recentEvent = db.prepare(`
+                SELECT id FROM events 
+                WHERE (LOWER(title) LIKE '%' || ? || '%' OR LOWER(summary) LIKE '%' || ? || '%')
+                ORDER BY created_at DESC LIMIT 1
+            `).get(wl.keyword, wl.keyword);
+
+            if (recentEvent) {
+                const message = `🎯 WATCHLIST ALERT: Keyword "${wl.keyword}" mentioned ${result.count} times in last 24h.`;
+                const nowStr = now.toISOString().replace('T', ' ').replace('Z', '');
+
+                insertAlert.run(uuidv4(), recentEvent.id, message, nowStr);
+                updateWatchlist.run(nowStr, wl.id);
+
+                console.log(`🎯 Triggered watchlist alert for: ${wl.keyword}`);
+                triggerCount++;
+            }
+        }
+    }
+
+    return triggerCount;
+}
+
+module.exports = { generateAlerts, checkWatchlists };

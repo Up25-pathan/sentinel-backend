@@ -70,3 +70,13 @@ CREATE INDEX IF NOT EXISTS idx_sources_event ON sources(event_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_event ON alerts(event_id);
 CREATE INDEX IF NOT EXISTS idx_alerts_read ON alerts(is_read);
 CREATE INDEX IF NOT EXISTS idx_raw_processed ON raw_articles(processed);
+
+-- User-defined watchlists for custom intelligence alerts (Phase 6)
+CREATE TABLE IF NOT EXISTS watchlists (
+    id TEXT PRIMARY KEY,
+    keyword TEXT NOT NULL UNIQUE,
+    threshold INTEGER DEFAULT 3,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_triggered_at TEXT
+);

@@ -16,6 +16,7 @@ const authRoutes = require('./routes/auth');
 const eventRoutes = require('./routes/events');
 const alertRoutes = require('./routes/alerts');
 const mapRoutes = require('./routes/map');
+const watchlistsRoutes = require('./routes/watchlists');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -46,6 +47,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/events', authMiddleware, eventRoutes);
 app.use('/api/alerts', authMiddleware, alertRoutes);
 app.use('/api/map', authMiddleware, mapRoutes);
+app.use('/api/watchlists', authMiddleware, watchlistsRoutes);
 
 // ─── 404 Handler ───────────────────────────────────────────────
 app.use((req, res) => {

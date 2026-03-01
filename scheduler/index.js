@@ -6,7 +6,7 @@ const cron = require('node-cron');
 const { ingestNews } = require('../services/ingestion');
 const { processArticles } = require('../services/ai-analysis');
 const { clusterEvents } = require('../services/clustering');
-const { generateAlerts } = require('../services/alerts');
+const { generateAlerts, checkWatchlists } = require('../services/alerts');
 
 function startScheduler() {
     console.log('⏰ Starting intelligence scheduler...\n');
@@ -33,6 +33,7 @@ function startScheduler() {
         try {
             await processArticles(10);
             generateAlerts();
+            checkWatchlists();
         } catch (err) {
             console.error('❌ Analysis error:', err.message);
         }
