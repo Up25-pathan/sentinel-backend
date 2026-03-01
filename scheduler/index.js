@@ -19,7 +19,7 @@ function startScheduler() {
     ingestNews().then(async () => {
         console.log(`[${new Date().toISOString()}] Generating initial intelligence events...`);
         try {
-            await processArticles(15);
+            await processArticles(10);
         } catch (err) {
             console.error('❌ Initial Analysis error:', err.message);
         }
