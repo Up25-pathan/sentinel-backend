@@ -74,7 +74,7 @@ function start() {
         console.log(`  🔒 Auth: ${process.env.AUTH_USERNAME || 'admin'}`);
         console.log(`  💾 DB: ${process.env.DB_PATH || './db/geoint.db'}`);
         console.log(`  📰 NewsAPI: ${process.env.NEWS_API_KEY ? '✅ configured' : '❌ not set'}`);
-        console.log(`  🧠 OpenAI: ${process.env.OPENAI_API_KEY ? '✅ configured' : '❌ not set (using fallback)'}`);
+        console.log(`  🧠 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅ configured' : '❌ not set (using fallback)'}`);
         console.log(`${'═'.repeat(55)}\n`);
 
         // Start the intelligence scheduler

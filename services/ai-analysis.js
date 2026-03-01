@@ -197,6 +197,12 @@ async function processArticles(batchSize = 10) {
             processed++;
 
             console.log(`  ✅ ${analysis.category} [${analysis.risk_level}]: ${article.title.substring(0, 60)}...`);
+
+            // Respect Gemini Free Tier Ratelimits (15 RPM)
+            // Wait 4.5 seconds between each request to guarantee stay under limit
+            if (processed < articles.length && process.env.GEMINI_API_KEY) {
+                await new Promise(resolve => setTimeout(resolve, 4500));
+            }
         } catch (err) {
             console.error(`  ❌ Failed to analyze: ${article.title}`, err.message);
             markProcessed.run(article.id);
