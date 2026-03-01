@@ -4,6 +4,8 @@
  */
 const cron = require('node-cron');
 const { ingestNews } = require('../services/ingestion');
+const { scrapeTelegramChannels } = require('../services/osint-telegram');
+const { scrapeXAccounts } = require('../services/osint-x');
 const { processArticles } = require('../services/ai-analysis');
 const { clusterEvents } = require('../services/clustering');
 const { generateAlerts, checkWatchlists } = require('../services/alerts');
@@ -23,6 +25,18 @@ function startScheduler() {
             await ingestNews();
         } catch (err) {
             console.error('❌ Ingestion error:', err.message);
+        }
+    });
+
+    // OSINT Ingestion (Telegram + X) — every 5 minutes (faster than RSS)
+    cron.schedule('*/5 * * * *', async () => {
+        console.log('─'.repeat(50));
+        console.log(`[${new Date().toISOString()}] Running OSINT ingestion (Telegram & X)...`);
+        try {
+            await scrapeTelegramChannels();
+            await scrapeXAccounts();
+        } catch (err) {
+            console.error('❌ OSINT Ingestion error:', err.message);
         }
     });
 
@@ -50,8 +64,9 @@ function startScheduler() {
         }
     });
 
-    console.log('  📰 News ingestion:  every 15 minutes');
-    console.log('  🧠 AI analysis:     every 5 minutes');
+    console.log('  📰 RSS News ingestion: every 15 minutes');
+    console.log('  📱 OSINT (TG & X):     every 5 minutes');
+    console.log('  🧠 AI analysis:      every 5 minutes');
     console.log('  🔗 Event clustering: every 30 minutes');
     console.log('  🚨 Alert generation: after each analysis\n');
 }
