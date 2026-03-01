@@ -99,6 +99,21 @@ async function runMacroAnalysis() {
 
     } catch (err) {
         console.error('  ❌ Macro Analysis Failed:', err.message);
+        const errBriefing = {
+            id: uuidv4(),
+            global_risk_score: 50,
+            major_situations_json: JSON.stringify([
+                { flashpoint: "System Degraded: API Quota Exceeded", description: `OpenAI rejected the request: ${err.message}. Please check your OpenAI billing plan and add credits.` }
+            ]),
+            macro_predictions_json: JSON.stringify([
+                "Predictive AI layer is temporarily offline."
+            ]),
+            created_at: new Date().toISOString().replace('T', ' ').replace('Z', '')
+        };
+        db.prepare(`
+            INSERT INTO global_briefings (id, global_risk_score, major_situations_json, macro_predictions_json, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        `).run(errBriefing.id, errBriefing.global_risk_score, errBriefing.major_situations_json, errBriefing.macro_predictions_json, errBriefing.created_at);
     }
 }
 

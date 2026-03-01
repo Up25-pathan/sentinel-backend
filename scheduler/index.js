@@ -16,7 +16,13 @@ function startScheduler() {
 
     // Run initial ingestion immediately
     console.log(`[${new Date().toISOString()}] Running initial news ingestion...`);
-    ingestNews().catch(err => console.error('❌ Initial ingestion error:', err.message));
+    ingestNews().then(() => {
+        // Run initial macro analysis exactly 2 minutes after boot (so events have time to populate)
+        setTimeout(() => {
+            console.log(`[${new Date().toISOString()}] Generating Initial Global AI Briefing...`);
+            runMacroAnalysis().catch(err => console.error('❌ Initial Macro Analysis error:', err.message));
+        }, 120000);
+    }).catch(err => console.error('❌ Initial ingestion error:', err.message));
 
     // News ingestion — every 15 minutes
     cron.schedule('*/15 * * * *', async () => {
