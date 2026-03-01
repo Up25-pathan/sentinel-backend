@@ -50,12 +50,12 @@ async function runMacroAnalysis() {
 
     try {
         const eventsPrompt = recentEvents.map(e => `[${e.risk_level}] ${e.category} - ${e.title}: ${e.summary}`).join('\n');
-        const prompt = `You are the Director of Global Intelligence. You synthesize individual news events into a cohesive, macro-level global situation report. Analyze the provided top 15 recent global events and return a strict JSON response. Do NOT use markdown code blocks like \`\`\`json.
+        const prompt = `You are the Director of Global Intelligence. You synthesize individual news events into a cohesive, macro-level global situation report. Analyze the provided top 15 recent global events and return a strict JSON response. Do NOT use markdown code blocks like \`\`\`json. You MUST return major_situations and macro_predictions as JSON Arrays.
 
 Top 15 Recent Intelligence Events:
 ${eventsPrompt}
 
-Respond with strictly this JSON format:
+Respond with strictly this JSON format, do not add or omit fields:
 {
     "global_risk_score": 0-100 (integer representing overall global instability and escalation risk),
     "major_situations": [
