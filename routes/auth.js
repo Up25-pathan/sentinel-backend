@@ -7,10 +7,10 @@ require('dotenv').config();
 router.post('/login', (req, res) => {
     const { username, password } = req.body;
 
-    if (
-        username === process.env.AUTH_USERNAME &&
-        password === process.env.AUTH_PASSWORD
-    ) {
+    const validUsername = process.env.AUTH_USERNAME || 'admin';
+    const validPassword = process.env.AUTH_PASSWORD || 'intel2024';
+
+    if (username === validUsername && password === validPassword) {
         const token = jwt.sign(
             { username, role: 'admin' },
             process.env.JWT_SECRET,
