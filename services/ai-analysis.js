@@ -78,6 +78,9 @@ Respond with JSON:
     "risk_level": "CRITICAL|HIGH|MEDIUM|LOW",
     "summary": "4-line intelligence summary",
     "ai_brief": "Detailed intelligence brief with assessment and implications",
+    "escalation_score": 0-100 (integer representing probability of near-term escalation),
+    "second_order_effects": ["Effect 1", "Effect 2", "Effect 3"],
+    "bias_analysis": "Sentence evaluating potential reporting bias or state narrative",
     "entities": {
         "countries": ["list of countries"],
         "cities": ["list of cities"],
@@ -124,8 +127,9 @@ async function processArticles(batchSize = 10) {
 
     const insertEvent = db.prepare(`
         INSERT INTO events (id, title, summary, ai_brief, category, risk_level, 
-            location_name, country, lat, lng, image_url, is_breaking, entities_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            location_name, country, lat, lng, image_url, is_breaking, entities_json, 
+            escalation_score, second_order_effects, bias_analysis, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertSource = db.prepare(`
@@ -167,6 +171,9 @@ async function processArticles(batchSize = 10) {
                 article.image_url,
                 isBreaking,
                 JSON.stringify(analysis.entities || {}),
+                analysis.escalation_score || 0,
+                JSON.stringify(analysis.second_order_effects || []),
+                analysis.bias_analysis || "Analysis pending.",
                 now,
                 now
             );

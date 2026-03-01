@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS events (
     is_breaking INTEGER DEFAULT 0,
     cluster_id TEXT,
     entities_json TEXT, -- JSON: countries, cities, leaders, organizations
+    escalation_score INTEGER DEFAULT 0,
+    second_order_effects TEXT,
+    bias_analysis TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
