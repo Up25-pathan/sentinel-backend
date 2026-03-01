@@ -12,8 +12,8 @@ const rssParser = new RSSParser();
 
 // Major geopolitical news RSS feeds
 const RSS_FEEDS = [
-    { name: 'Reuters World', url: 'https://feeds.reuters.com/Reuters/worldNews' },
-    { name: 'AP Top News', url: 'https://rsshub.app/apnews/topics/apf-topnews' },
+    { name: 'NYT World', url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml' },
+    { name: 'The Guardian', url: 'https://www.theguardian.com/world/rss' },
     { name: 'BBC World', url: 'http://feeds.bbci.co.uk/news/world/rss.xml' },
     { name: 'Al Jazeera', url: 'https://www.aljazeera.com/xml/rss/all.xml' },
     { name: 'France 24', url: 'https://www.france24.com/en/rss' },
