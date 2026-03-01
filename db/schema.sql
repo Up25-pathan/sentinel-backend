@@ -83,3 +83,12 @@ CREATE TABLE IF NOT EXISTS watchlists (
     created_at TEXT DEFAULT (datetime('now')),
     last_triggered_at TEXT
 );
+
+-- Macro-Level AI Briefings (Phase 7)
+CREATE TABLE IF NOT EXISTS global_briefings (
+    id TEXT PRIMARY KEY,
+    global_risk_score INTEGER DEFAULT 0,
+    major_situations_json TEXT, -- JSON array of active conflicts/situations
+    macro_predictions_json TEXT, -- JSON array of global predictions
+    created_at TEXT DEFAULT (datetime('now'))
+);

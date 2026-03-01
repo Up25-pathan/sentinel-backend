@@ -7,6 +7,7 @@ const { ingestNews } = require('../services/ingestion');
 const { scrapeTelegramChannels } = require('../services/osint-telegram');
 const { scrapeXAccounts } = require('../services/osint-x');
 const { processArticles } = require('../services/ai-analysis');
+const { runMacroAnalysis } = require('../services/macro-analysis');
 const { clusterEvents } = require('../services/clustering');
 const { generateAlerts, checkWatchlists } = require('../services/alerts');
 
@@ -53,6 +54,17 @@ function startScheduler() {
         }
     });
 
+    // Global AI Briefing — every 60 minutes
+    cron.schedule('0 * * * *', async () => {
+        console.log('─'.repeat(50));
+        console.log(`[${new Date().toISOString()}] Generating Global AI Briefing...`);
+        try {
+            await runMacroAnalysis();
+        } catch (err) {
+            console.error('❌ Macro Analysis error:', err.message);
+        }
+    });
+
     // Event clustering — every 30 minutes
     cron.schedule('*/30 * * * *', () => {
         console.log('─'.repeat(50));
@@ -67,6 +79,7 @@ function startScheduler() {
     console.log('  📰 RSS News ingestion: every 15 minutes');
     console.log('  📱 OSINT (TG & X):     every 5 minutes');
     console.log('  🧠 AI analysis:      every 5 minutes');
+    console.log('  🌍 Global AI Briefing: every 60 minutes');
     console.log('  🔗 Event clustering: every 30 minutes');
     console.log('  🚨 Alert generation: after each analysis\n');
 }
