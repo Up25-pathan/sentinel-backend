@@ -2,18 +2,18 @@
  * AI Analysis Pipeline
  * Uses OpenAI to classify, summarize, and extract entities from raw articles
  */
-const OpenAI = require('openai');
+const { GoogleGenAI } = require('@google/genai');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
 
-let openai = null;
+let gemini = null;
 
-function getOpenAI() {
-    if (!openai && process.env.OPENAI_API_KEY) {
-        openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+function getGemini() {
+    if (!gemini && process.env.GEMINI_API_KEY) {
+        gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     }
-    return openai;
+    return gemini;
 }
 
 // Fallback analysis when OpenAI is not configured
@@ -51,23 +51,16 @@ function fallbackAnalysis(article) {
  * Analyze a single article using OpenAI
  */
 async function analyzeWithAI(article) {
-    const client = getOpenAI();
+    const ai = getGemini();
 
-    if (!client) {
+    if (!ai) {
         return fallbackAnalysis(article);
     }
 
     try {
-        const response = await client.chat.completions.create({
-            model: 'gpt-3.5-turbo',
-            messages: [
-                {
-                    role: 'system',
-                    content: `You are a geopolitical intelligence analyst. Analyze the following news article and provide a structured assessment. Respond in JSON format only.`
-                },
-                {
-                    role: 'user',
-                    content: `Analyze this article:
+        const prompt = `
+You are a geopolitical intelligence analyst. Analyze the following news article and provide a structured assessment. Respond with ONLY valid JSON and no markdown formatting.
+
 Title: ${article.title}
 Description: ${article.description}
 Source: ${article.source_name}
@@ -90,17 +83,30 @@ Respond with JSON:
     "location_name": "Primary location name",
     "lat": latitude_number_or_null,
     "lng": longitude_number_or_null
-}`
-                }
-            ],
-            temperature: 0.3,
-            max_tokens: 800,
-            response_format: { type: 'json_object' }
+}`;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                temperature: 0.3,
+                maxOutputTokens: 800,
+                responseMimeType: 'application/json'
+            }
         });
 
-        return JSON.parse(response.choices[0].message.content);
+        // Gemini sometimes includes markdown formatting even when instructed not to, cleanly parsing it out
+        let rawText = response.text;
+        if (rawText.startsWith('```json')) {
+            rawText = rawText.substring(7);
+        }
+        if (rawText.endsWith('```')) {
+            rawText = rawText.substring(0, rawText.length - 3);
+        }
+
+        return JSON.parse(rawText.trim());
     } catch (err) {
-        console.warn('  ⚠️ OpenAI analysis failed, using fallback:', err.message);
+        console.warn('  ⚠️ Gemini analysis failed, using fallback:', err.message);
         return fallbackAnalysis(article);
     }
 }

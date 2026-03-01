@@ -1,13 +1,13 @@
-const OpenAI = require('openai');
+const { GoogleGenAI } = require('@google/genai');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
-let openai = null;
-function getOpenAI() {
-    if (!openai && process.env.OPENAI_API_KEY) {
-        openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let gemini = null;
+function getGemini() {
+    if (!gemini && process.env.GEMINI_API_KEY) {
+        gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     }
-    return openai;
+    return gemini;
 }
 
 async function runMacroAnalysis() {
@@ -26,9 +26,9 @@ async function runMacroAnalysis() {
         return;
     }
 
-    const client = getOpenAI();
-    if (!client) {
-        console.warn('  ⚠️ No OpenAI key configured. Creating fallback macro analysis.');
+    const ai = getGemini();
+    if (!ai) {
+        console.warn('  ⚠️ No Gemini API key configured. Creating fallback macro analysis.');
         const mockBriefing = {
             id: uuidv4(),
             global_risk_score: 65,
@@ -50,17 +50,12 @@ async function runMacroAnalysis() {
 
     try {
         const eventsPrompt = recentEvents.map(e => `[${e.risk_level}] ${e.category} - ${e.title}: ${e.summary}`).join('\n');
+        const prompt = `You are the Director of Global Intelligence. You synthesize individual news events into a cohesive, macro-level global situation report. Analyze the provided top 15 recent global events and return a strict JSON response. Do NOT use markdown code blocks like \`\`\`json.
 
-        const response = await client.chat.completions.create({
-            model: 'gpt-3.5-turbo',
-            messages: [
-                {
-                    role: 'system',
-                    content: `You are the Director of Global Intelligence. You synthesize individual news events into a cohesive, macro-level global situation report. Analyze the provided top 15 recent global events and return a strict JSON response.`
-                },
-                {
-                    role: 'user',
-                    content: `Top 15 Recent Intelligence Events:\n${eventsPrompt}\n\nRespond with strict JSON format:
+Top 15 Recent Intelligence Events:
+${eventsPrompt}
+
+Respond with strictly this JSON format:
 {
     "global_risk_score": 0-100 (integer representing overall global instability and escalation risk),
     "major_situations": [
@@ -74,14 +69,27 @@ async function runMacroAnalysis() {
         "Prediction 2",
         "Prediction 3"
     ]
-}`
-                }
-            ],
-            temperature: 0.4,
-            response_format: { type: 'json_object' }
+}`;
+
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: {
+                temperature: 0.4,
+                responseMimeType: 'application/json'
+            }
         });
 
-        const analysis = JSON.parse(response.choices[0].message.content);
+        // Clean out any accidental markdown blocks that sometimes sneak past the instructions
+        let rawText = response.text;
+        if (rawText.startsWith('```json')) {
+            rawText = rawText.substring(7);
+        }
+        if (rawText.endsWith('```')) {
+            rawText = rawText.substring(0, rawText.length - 3);
+        }
+
+        const analysis = JSON.parse(rawText.trim());
         const now = new Date().toISOString().replace('T', ' ').replace('Z', '');
 
         db.prepare(`
@@ -103,7 +111,7 @@ async function runMacroAnalysis() {
             id: uuidv4(),
             global_risk_score: 50,
             major_situations_json: JSON.stringify([
-                { flashpoint: "System Degraded: API Quota Exceeded", description: `OpenAI rejected the request: ${err.message}. Please check your OpenAI billing plan and add credits.` }
+                { flashpoint: "System Degraded: API Quota Exceeded", description: `Gemini rejected the request: ${err.message}. Please check your Google Cloud Console for quota limits.` }
             ]),
             macro_predictions_json: JSON.stringify([
                 "Predictive AI layer is temporarily offline."
