@@ -2,7 +2,7 @@
  * Seed Data — Realistic Geopolitical Events for UI Testing
  * Run with: npm run seed
  */
-const { getDb, closeDb } = require('./index');
+const { getDb } = require('./index');
 const { v4: uuidv4 } = require('uuid');
 
 const EVENTS = [
@@ -343,8 +343,12 @@ function seed() {
     console.log(`   📰 ${eventCount.count} geopolitical events`);
     console.log(`   📡 ${sourceCount.count} sources`);
     console.log(`   🚨 ${alertCount.count} alerts\n`);
+}
 
+if (require.main === module) {
+    seed();
+    const { closeDb } = require('./index');
     closeDb();
 }
 
-seed();
+module.exports = seed;

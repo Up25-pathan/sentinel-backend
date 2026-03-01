@@ -27,6 +27,14 @@ function getDb() {
         db.exec(schema);
 
         console.log('✅ Database initialized at:', resolvedPath);
+
+        // Auto-seed if empty
+        const eventCount = db.prepare('SELECT COUNT(*) as count FROM events').get();
+        if (eventCount.count === 0) {
+            console.log('📦 Database is empty. Running auto-seeding...');
+            const seed = require('./seed');
+            seed();
+        }
     }
     return db;
 }
