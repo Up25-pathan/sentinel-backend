@@ -11,6 +11,10 @@ const { generateAlerts } = require('../services/alerts');
 function startScheduler() {
     console.log('⏰ Starting intelligence scheduler...\n');
 
+    // Run initial ingestion immediately
+    console.log(`[${new Date().toISOString()}] Running initial news ingestion...`);
+    ingestNews().catch(err => console.error('❌ Initial ingestion error:', err.message));
+
     // News ingestion — every 15 minutes
     cron.schedule('*/15 * * * *', async () => {
         console.log('─'.repeat(50));
