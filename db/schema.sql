@@ -91,5 +91,20 @@ CREATE TABLE IF NOT EXISTS global_briefings (
     global_risk_score INTEGER DEFAULT 0,
     major_situations_json TEXT, -- JSON array of active conflicts/situations
     macro_predictions_json TEXT, -- JSON array of global predictions
+    briefing_data TEXT, -- JSON blob for daily briefings
     created_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Dark Web Intelligence (Phase 4)
+CREATE TABLE IF NOT EXISTS dark_web_intel (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id TEXT UNIQUE, -- dedup key per source
+    source TEXT NOT NULL, -- abuse.ch, ransomware.live, OTX, Shodan
+    category TEXT NOT NULL, -- MALWARE, BOTNET_C2, RANSOMWARE, THREAT_INTEL, EXPOSED_INFRA
+    title TEXT NOT NULL,
+    content TEXT,
+    threat_level TEXT DEFAULT 'MEDIUM', -- LOW, MEDIUM, HIGH, CRITICAL
+    url TEXT,
+    tags TEXT, -- JSON array
+    discovered_at TEXT DEFAULT (datetime('now'))
 );

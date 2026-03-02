@@ -12,6 +12,7 @@ const { runMacroAnalysis } = require('../services/macro-analysis');
 const { clusterEvents } = require('../services/clustering');
 const { generateAlerts, checkWatchlists } = require('../services/alerts');
 const { generateDailyBriefing } = require('../services/daily-briefing');
+const { scrapeDarkWeb } = require('../services/dark-web-scraper');
 
 function startScheduler() {
     // ─── 6. Daily Briefing ─────────────────────────────────
@@ -63,6 +64,7 @@ function startScheduler() {
             await scrapeTelegramChannels();
             await scrapeXAccounts();
             await scrapeReddit();
+            await scrapeDarkWeb();
         } catch (err) {
             console.error('❌ OSINT Ingestion error:', err.message);
         }

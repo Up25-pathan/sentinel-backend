@@ -8,7 +8,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const { getDb, closeDb } = require('./db');
-const { authMiddleware } = require('./middleware/auth');
+const { authMiddleware, apiKeyMiddleware, securityHeaders } = require('./middleware/auth');
 const { startScheduler } = require('./scheduler');
 
 // Route imports
@@ -19,6 +19,7 @@ const mapRoutes = require('./routes/map');
 const watchlistsRoutes = require('./routes/watchlists');
 const intelligenceRoutes = require('./routes/intelligence');
 const osintRoutes = require('./routes/osint');
+const darkwebRoutes = require('./routes/darkweb');
 
 const rateLimit = require('express-rate-limit');
 
@@ -44,6 +45,8 @@ const authLimiter = rateLimit({
 app.use(cors());
 app.use(express.json());
 app.use(generalLimiter);
+app.use(securityHeaders);
+app.use(apiKeyMiddleware);
 
 // ─── Health Check (no auth) ────────────────────────────────────
 app.get('/api/health', (req, res) => {
@@ -70,6 +73,7 @@ app.use('/api/map', authMiddleware, mapRoutes);
 app.use('/api/watchlists', authMiddleware, watchlistsRoutes);
 app.use('/api/intelligence', authMiddleware, intelligenceRoutes);
 app.use('/api/osint', authMiddleware, osintRoutes);
+app.use('/api/darkweb', authMiddleware, darkwebRoutes);
 
 // ─── Export/Backup Route ───────────────────────────────────────
 const { exportAll } = require('./services/export');
