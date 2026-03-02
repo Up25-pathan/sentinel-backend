@@ -11,8 +11,20 @@ const { processArticles } = require('../services/ai-analysis');
 const { runMacroAnalysis } = require('../services/macro-analysis');
 const { clusterEvents } = require('../services/clustering');
 const { generateAlerts, checkWatchlists } = require('../services/alerts');
+const { generateDailyBriefing } = require('../services/daily-briefing');
 
 function startScheduler() {
+    // ─── 6. Daily Briefing ─────────────────────────────────
+    // Run at 6 AM UTC daily + every 12 hours
+    cron.schedule('0 6,18 * * *', async () => {
+        console.log('\n📋 Running Daily Briefing...');
+        try {
+            await generateDailyBriefing();
+        } catch (err) {
+            console.error('❌ Daily Briefing error:', err.message);
+        }
+    });
+
     console.log('⏰ Starting intelligence scheduler...\n');
 
     // Run initial ingestion immediately
@@ -96,6 +108,7 @@ function startScheduler() {
     console.log('  🧠 AI analysis:      every 5 minutes');
     console.log('  🌍 Global AI Briefing: every 60 minutes');
     console.log('  🔗 Event clustering: every 30 minutes');
+    console.log('  📋 Daily Briefing:   6 AM + 6 PM UTC');
     console.log('  🚨 Alert generation: after each analysis\n');
 }
 
