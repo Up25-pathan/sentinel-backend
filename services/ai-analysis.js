@@ -2,7 +2,6 @@
  * AI Analysis Pipeline
  * Uses OpenAI to classify, summarize, and extract entities from raw articles
  */
-const { GoogleGenAI } = require('@google/genai');
 const Groq = require('groq-sdk');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
