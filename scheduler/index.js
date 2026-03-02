@@ -6,6 +6,7 @@ const cron = require('node-cron');
 const { ingestNews } = require('../services/ingestion');
 const { scrapeTelegramChannels } = require('../services/osint-telegram');
 const { scrapeXAccounts } = require('../services/osint-x');
+const { scrapeReddit } = require('../services/osint-reddit');
 const { processArticles } = require('../services/ai-analysis');
 const { runMacroAnalysis } = require('../services/macro-analysis');
 const { clusterEvents } = require('../services/clustering');
@@ -49,6 +50,7 @@ function startScheduler() {
         try {
             await scrapeTelegramChannels();
             await scrapeXAccounts();
+            await scrapeReddit();
         } catch (err) {
             console.error('❌ OSINT Ingestion error:', err.message);
         }
@@ -90,7 +92,7 @@ function startScheduler() {
     });
 
     console.log('  📰 RSS News ingestion: every 15 minutes');
-    console.log('  📱 OSINT (TG & X):     every 5 minutes');
+    console.log('  📱 OSINT (TG, X, Reddit): every 5 minutes');
     console.log('  🧠 AI analysis:      every 5 minutes');
     console.log('  🌍 Global AI Briefing: every 60 minutes');
     console.log('  🔗 Event clustering: every 30 minutes');

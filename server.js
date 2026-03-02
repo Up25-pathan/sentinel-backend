@@ -20,12 +20,30 @@ const watchlistsRoutes = require('./routes/watchlists');
 const intelligenceRoutes = require('./routes/intelligence');
 const osintRoutes = require('./routes/osint');
 
+const rateLimit = require('express-rate-limit');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// ─── Rate Limiting ─────────────────────────────────────────────
+const generalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // 100 requests per 15 min per IP
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later.' }
+});
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10, // 10 login attempts per 15 min
+    message: { error: 'Too many login attempts. Try again in 15 minutes.' }
+});
 
 // ─── Middleware ─────────────────────────────────────────────────
 app.use(cors());
 app.use(express.json());
+app.use(generalLimiter);
 
 // ─── Health Check (no auth) ────────────────────────────────────
 app.get('/api/health', (req, res) => {
@@ -43,7 +61,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // ─── Auth Routes (no auth middleware) ──────────────────────────
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 
 // ─── Protected Routes ──────────────────────────────────────────
 app.use('/api/events', authMiddleware, eventRoutes);

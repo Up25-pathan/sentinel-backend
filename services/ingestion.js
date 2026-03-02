@@ -17,6 +17,11 @@ const RSS_FEEDS = [
     { name: 'BBC World', url: 'http://feeds.bbci.co.uk/news/world/rss.xml' },
     { name: 'Al Jazeera', url: 'https://www.aljazeera.com/xml/rss/all.xml' },
     { name: 'France 24', url: 'https://www.france24.com/en/rss' },
+    { name: 'Reuters World', url: 'https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best' },
+    { name: 'AP News', url: 'https://rsshub.app/apnews/topics/world-news' },
+    { name: 'DW News', url: 'https://rss.dw.com/rdf/rss-en-world' },
+    { name: 'TASS', url: 'https://tass.com/rss/v2.xml' },
+    { name: 'Janes Defence', url: 'https://www.janes.com/feeds/news' },
 ];
 
 // Geopolitical keywords for filtering
