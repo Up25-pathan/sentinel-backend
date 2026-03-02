@@ -17,7 +17,7 @@ router.get('/', (req, res) => {
         } = req.query;
 
         const offset = (parseInt(page) - 1) * parseInt(limit);
-        let where = [`source_name NOT LIKE 'OSINT:%'`];
+        let where = [`NOT EXISTS (SELECT 1 FROM sources s WHERE s.event_id = events.id AND s.name LIKE 'OSINT:%')`];
         let params = [];
 
         if (category) {
