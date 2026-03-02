@@ -3,17 +3,19 @@
  * Uses OpenAI to classify, summarize, and extract entities from raw articles
  */
 const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
+const { fetchEventImages } = require('./image-scraper');
 require('dotenv').config();
 
-let gemini = null;
+let groq = null;
 
-function getGemini() {
-    if (!gemini && process.env.GEMINI_API_KEY) {
-        gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+function getGroq() {
+    if (!groq && process.env.GROQ_API_KEY) {
+        groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     }
-    return gemini;
+    return groq;
 }
 
 // Fallback analysis when OpenAI is not configured
@@ -51,7 +53,7 @@ function fallbackAnalysis(article) {
  * Analyze a single article using OpenAI
  */
 async function analyzeWithAI(article) {
-    const ai = getGemini();
+    const ai = getGroq();
 
     if (!ai) {
         return fallbackAnalysis(article);
@@ -59,21 +61,23 @@ async function analyzeWithAI(article) {
 
     try {
         const prompt = `
-You are a geopolitical intelligence analyst. Analyze the following news article and provide a structured assessment. Respond with ONLY valid JSON and no markdown formatting.
+You are a senior military intelligence officer stationed at a global command center. Your job is to analyze incoming raw situational data (often fragmented or biased) and produce actionable, highly detailed tactical intelligence briefs.
+
+Respond with ONLY valid JSON. Absolutely NO markdown formatting, NO code block ticks.
 
 Title: ${article.title}
 Description: ${article.description}
 Source: ${article.source_name}
 
-Respond with JSON:
+Respond strictly matching this JSON schema:
 {
     "category": "WAR|MILITARY_MOVEMENT|SANCTIONS|COUP|DIPLOMATIC_ESCALATION|NUCLEAR_THREAT|POLITICAL_INSTABILITY|TERRORISM|CYBER_ATTACK|HUMANITARIAN|OTHER",
     "risk_level": "CRITICAL|HIGH|MEDIUM|LOW",
-    "summary": "4-line intelligence summary",
-    "ai_brief": "Detailed intelligence brief with assessment and implications",
-    "escalation_score": 0-100 (integer representing probability of near-term escalation),
-    "second_order_effects": ["Effect 1", "Effect 2", "Effect 3"],
-    "bias_analysis": "Sentence evaluating potential reporting bias or state narrative",
+    "summary": "Create a distinct, sharp, 1-sentence headline/TL;DR summarizing the core event.",
+    "ai_brief": "Write a massive, deep, multi-paragraph tactical intelligence brief. It must read like a classified military dossier. Analyze the strategic implications, historical context, potential motives, and immediate fallout. Minimum 3 paragraphs.",
+    "escalation_score": 0-100 (integer representing probability of near-term kinetic escalation),
+    "second_order_effects": ["Geopolitical Effect 1", "Economic Effect 2", "Strategic Effect 3"],
+    "bias_analysis": "Sentence evaluating potential reporting bias or state narrative of the source.",
     "entities": {
         "countries": ["list of countries"],
         "cities": ["list of cities"],
@@ -85,28 +89,18 @@ Respond with JSON:
     "lng": longitude_number_or_null
 }`;
 
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                temperature: 0.3,
-                maxOutputTokens: 800,
-                responseMimeType: 'application/json'
-            }
+        const response = await ai.chat.completions.create({
+            model: 'llama3-8b-8192',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.3,
+            max_tokens: 800,
+            response_format: { type: 'json_object' }
         });
 
-        // Gemini sometimes includes markdown formatting even when instructed not to, cleanly parsing it out
-        let rawText = response.text;
-        if (rawText.startsWith('```json')) {
-            rawText = rawText.substring(7);
-        }
-        if (rawText.endsWith('```')) {
-            rawText = rawText.substring(0, rawText.length - 3);
-        }
-
+        const rawText = response.choices[0].message.content;
         return JSON.parse(rawText.trim());
     } catch (err) {
-        console.warn('  ⚠️ Gemini analysis failed, using fallback:', err.message);
+        console.warn('  ⚠️ Groq analysis failed, using fallback:', err.message);
         return fallbackAnalysis(article);
     }
 }
@@ -133,9 +127,9 @@ async function processArticles(batchSize = 10) {
 
     const insertEvent = db.prepare(`
         INSERT INTO events (id, title, summary, ai_brief, category, risk_level, 
-            location_name, country, lat, lng, image_url, is_breaking, entities_json, 
+            location_name, country, lat, lng, image_url, images_json, is_breaking, entities_json, 
             escalation_score, second_order_effects, bias_analysis, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertSource = db.prepare(`
@@ -163,6 +157,10 @@ async function processArticles(batchSize = 10) {
             // Extract country from entities
             const country = analysis.entities?.countries?.[0] || null;
 
+            // Fetch extra context images via Headless Scraper
+            const searchQuery = `${analysis.location_name || country || ''} ${analysis.category.replace('_', ' ')} geopolitical conflict`.trim();
+            const images = await fetchEventImages(searchQuery);
+
             insertEvent.run(
                 eventId,
                 article.title,
@@ -174,7 +172,8 @@ async function processArticles(batchSize = 10) {
                 country,
                 analysis.lat,
                 analysis.lng,
-                article.image_url,
+                images.length > 0 ? images[0] : article.image_url,
+                JSON.stringify(images),
                 isBreaking,
                 JSON.stringify(analysis.entities || {}),
                 analysis.escalation_score || 0,
@@ -198,13 +197,13 @@ async function processArticles(batchSize = 10) {
 
             console.log(`  ✅ ${analysis.category} [${analysis.risk_level}]: ${article.title.substring(0, 60)}...`);
 
-            // Respect Gemini Free Tier Ratelimits (15 RPM)
-            // Wait 4.5 seconds between each request to guarantee stay under limit
-            if (processed < articles.length && process.env.GEMINI_API_KEY) {
-                await new Promise(resolve => setTimeout(resolve, 4500));
+            // Groq has 14,400 Requests/Day and 30 RPM on the free tier.
+            // 2 second delay keeps us exactly at 30 RPM without exhausting the massive daily limit.
+            if (processed < articles.length && process.env.GROQ_API_KEY) {
+                await new Promise(resolve => setTimeout(resolve, 2050));
             }
         } catch (err) {
-            console.error(`  ❌ Failed to analyze: ${article.title}`, err.message);
+            console.error(`  ❌ Failed to analyze: ${article.title} `, err.message);
             markProcessed.run(article.id);
         }
     }

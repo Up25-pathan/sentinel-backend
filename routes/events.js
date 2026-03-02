@@ -17,7 +17,7 @@ router.get('/', (req, res) => {
         } = req.query;
 
         const offset = (parseInt(page) - 1) * parseInt(limit);
-        let where = [];
+        let where = [`source_name NOT LIKE 'OSINT:%'`];
         let params = [];
 
         if (category) {

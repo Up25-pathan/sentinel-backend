@@ -1,13 +1,13 @@
-const { GoogleGenAI } = require('@google/genai');
+const Groq = require('groq-sdk');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
-let gemini = null;
-function getGemini() {
-    if (!gemini && process.env.GEMINI_API_KEY) {
-        gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let groq = null;
+function getGroq() {
+    if (!groq && process.env.GROQ_API_KEY) {
+        groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     }
-    return gemini;
+    return groq;
 }
 
 async function runMacroAnalysis() {
@@ -26,9 +26,9 @@ async function runMacroAnalysis() {
         return;
     }
 
-    const ai = getGemini();
+    const ai = getGroq();
     if (!ai) {
-        console.warn('  ⚠️ No Gemini API key configured. Creating fallback macro analysis.');
+        console.warn('  ⚠️ No Groq API key configured. Creating fallback macro analysis.');
         const mockBriefing = {
             id: uuidv4(),
             global_risk_score: 65,
@@ -71,24 +71,14 @@ Respond with strictly this JSON format, do not add or omit fields:
     ]
 }`;
 
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                temperature: 0.4,
-                responseMimeType: 'application/json'
-            }
+        const response = await ai.chat.completions.create({
+            model: 'llama3-8b-8192',
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.4,
+            response_format: { type: 'json_object' }
         });
 
-        // Clean out any accidental markdown blocks that sometimes sneak past the instructions
-        let rawText = response.text;
-        if (rawText.startsWith('```json')) {
-            rawText = rawText.substring(7);
-        }
-        if (rawText.endsWith('```')) {
-            rawText = rawText.substring(0, rawText.length - 3);
-        }
-
+        const rawText = response.choices[0].message.content;
         const analysis = JSON.parse(rawText.trim());
         const now = new Date().toISOString().replace('T', ' ').replace('Z', '');
 
@@ -111,7 +101,7 @@ Respond with strictly this JSON format, do not add or omit fields:
             id: uuidv4(),
             global_risk_score: 50,
             major_situations_json: JSON.stringify([
-                { flashpoint: "System Degraded: API Quota Exceeded", description: `Gemini rejected the request: ${err.message}. Please check your Google Cloud Console for quota limits.` }
+                { flashpoint: "System Degraded", description: `Groq rejected the request: ${err.message}. Please check your API limits.` }
             ]),
             macro_predictions_json: JSON.stringify([
                 "Predictive AI layer is temporarily offline."

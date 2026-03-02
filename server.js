@@ -18,6 +18,7 @@ const alertRoutes = require('./routes/alerts');
 const mapRoutes = require('./routes/map');
 const watchlistsRoutes = require('./routes/watchlists');
 const intelligenceRoutes = require('./routes/intelligence');
+const osintRoutes = require('./routes/osint');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -50,6 +51,7 @@ app.use('/api/alerts', authMiddleware, alertRoutes);
 app.use('/api/map', authMiddleware, mapRoutes);
 app.use('/api/watchlists', authMiddleware, watchlistsRoutes);
 app.use('/api/intelligence', authMiddleware, intelligenceRoutes);
+app.use('/api/osint', authMiddleware, osintRoutes);
 
 // ─── 404 Handler ───────────────────────────────────────────────
 app.use((req, res) => {
@@ -74,7 +76,7 @@ function start() {
         console.log(`  🔒 Auth: ${process.env.AUTH_USERNAME || 'admin'}`);
         console.log(`  💾 DB: ${process.env.DB_PATH || './db/geoint.db'}`);
         console.log(`  📰 NewsAPI: ${process.env.NEWS_API_KEY ? '✅ configured' : '❌ not set'}`);
-        console.log(`  🧠 Gemini AI: ${process.env.GEMINI_API_KEY ? '✅ configured' : '❌ not set (using fallback)'}`);
+        console.log(`  🧠 Groq AI: ${process.env.GROQ_API_KEY ? '✅ configured' : '❌ not set (using fallback)'}`);
         console.log(`${'═'.repeat(55)}\n`);
 
         // Start the intelligence scheduler
