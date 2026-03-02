@@ -71,6 +71,19 @@ app.use('/api/watchlists', authMiddleware, watchlistsRoutes);
 app.use('/api/intelligence', authMiddleware, intelligenceRoutes);
 app.use('/api/osint', authMiddleware, osintRoutes);
 
+// ─── Export/Backup Route ───────────────────────────────────────
+const { exportAll } = require('./services/export');
+app.get('/api/export', authMiddleware, (req, res) => {
+    try {
+        const days = parseInt(req.query.days) || 30;
+        const data = exportAll(days);
+        res.json(data);
+    } catch (err) {
+        console.error('Export error:', err);
+        res.status(500).json({ error: 'Export failed' });
+    }
+});
+
 // ─── 404 Handler ───────────────────────────────────────────────
 app.use((req, res) => {
     res.status(404).json({ error: 'Endpoint not found' });
