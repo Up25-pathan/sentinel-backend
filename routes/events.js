@@ -51,9 +51,23 @@ router.get('/', (req, res) => {
         // Get source counts for each event
         const enriched = events.map(event => {
             const sourceCount = db.prepare('SELECT COUNT(*) as count FROM sources WHERE event_id = ?').get(event.id);
+
+            let parsedEntities = null;
+            if (event.entities_json) {
+                try { parsedEntities = JSON.parse(event.entities_json); }
+                catch (e) { console.warn(`Failed to parse entities for event ${event.id}`); }
+            }
+
+            let parsedImages = [];
+            if (event.images_json) {
+                try { parsedImages = JSON.parse(event.images_json); }
+                catch (e) { console.warn(`Failed to parse images for event ${event.id}`); }
+            }
+
             return {
                 ...event,
-                entities: event.entities_json ? JSON.parse(event.entities_json) : null,
+                images_json: parsedImages,
+                entities: parsedEntities,
                 source_count: sourceCount.count
             };
         });
@@ -69,7 +83,7 @@ router.get('/', (req, res) => {
         });
     } catch (err) {
         console.error('Error fetching events:', err);
-        res.status(500).json({ error: 'Failed to fetch events' });
+        res.status(500).json({ error: 'Failed to fetch events', details: err.message, stack: err.stack });
     }
 });
 
@@ -149,9 +163,22 @@ router.get('/:id', (req, res) => {
             LIMIT 5
         `).all(event.id, event.category, event.country);
 
+        let parsedEntities = null;
+        if (event.entities_json) {
+            try { parsedEntities = JSON.parse(event.entities_json); }
+            catch (e) { console.warn(`Failed to parse entities for event ${event.id}`); }
+        }
+
+        let parsedImages = [];
+        if (event.images_json) {
+            try { parsedImages = JSON.parse(event.images_json); }
+            catch (e) { console.warn(`Failed to parse images for event ${event.id}`); }
+        }
+
         res.json({
             ...event,
-            entities: event.entities_json ? JSON.parse(event.entities_json) : null,
+            images_json: parsedImages,
+            entities: parsedEntities,
             sources,
             alerts,
             related

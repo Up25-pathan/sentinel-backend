@@ -17,11 +17,17 @@ router.get('/macro', (req, res) => {
             return res.json(null);
         }
 
+        let situations = [];
+        try { situations = JSON.parse(briefing.major_situations_json || '[]'); } catch (e) { }
+
+        let predictions = [];
+        try { predictions = JSON.parse(briefing.macro_predictions_json || '[]'); } catch (e) { }
+
         res.json({
             id: briefing.id,
             global_risk_score: briefing.global_risk_score,
-            major_situations: JSON.parse(briefing.major_situations_json || '[]'),
-            macro_predictions: JSON.parse(briefing.macro_predictions_json || '[]'),
+            major_situations: situations,
+            macro_predictions: predictions,
             created_at: briefing.created_at
         });
     } catch (err) {
