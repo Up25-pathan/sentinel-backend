@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS events (
     lat REAL,
     lng REAL,
     image_url TEXT,
+    images_json TEXT,
     is_breaking INTEGER DEFAULT 0,
     cluster_id TEXT,
     entities_json TEXT, -- JSON: countries, cities, leaders, organizations

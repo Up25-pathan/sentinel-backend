@@ -26,6 +26,13 @@ function getDb() {
         const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
         db.exec(schema);
 
+        // Run migrations
+        try {
+            db.exec('ALTER TABLE events ADD COLUMN images_json TEXT;');
+        } catch (err) {
+            // Column may already exist, ignore
+        }
+
         console.log('✅ Database initialized at:', resolvedPath);
     }
     return db;
