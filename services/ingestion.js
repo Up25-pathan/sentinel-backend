@@ -21,7 +21,7 @@ const RSS_FEEDS = [
     { name: 'AP News', url: 'https://rsshub.app/apnews/topics/world-news' },
     { name: 'DW News', url: 'https://rss.dw.com/rdf/rss-en-world' },
     { name: 'TASS', url: 'https://tass.com/rss/v2.xml' },
-    { name: 'Janes Defence', url: 'https://www.janes.com/feeds/news' },
+    { name: 'Defense One', url: 'https://www.defenseone.com/rss/' },
 ];
 
 // Geopolitical keywords for filtering
