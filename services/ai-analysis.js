@@ -6,6 +6,7 @@ const Groq = require('groq-sdk');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 const { fetchEventImages } = require('./image-scraper');
+const { processEventNexus } = require('./nexus');
 require('dotenv').config();
 
 let groq = null;
@@ -181,6 +182,17 @@ async function processArticles(batchSize = 10) {
                 now,
                 now
             );
+
+            // ─── PROJECT NEXUS: Relational Mapping ──────────
+            // Fire and forget (don't block the main analysis loop)
+            processEventNexus({
+                id: eventId,
+                title: article.title,
+                summary: analysis.summary,
+                category: analysis.category,
+                location_name: analysis.location_name,
+                country: country
+            }).catch(err => console.error(`  ⚠️ Nexus failed for ${eventId}:`, err.message));
 
             insertSource.run(
                 uuidv4(),

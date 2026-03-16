@@ -5,7 +5,16 @@
  */
 const axios = require('axios');
 const { getDb } = require('../db');
+const Groq = require('groq-sdk');
 require('dotenv').config();
+
+let groq = null;
+function getGroq() {
+    if (!groq && process.env.GROQ_API_KEY) {
+        groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    }
+    return groq;
+}
 
 // ─── 1. abuse.ch — Malware/Botnet Tracking ──────────────────────
 // Free, no API key needed. Tracks botnets, malware C2 servers.
@@ -238,9 +247,72 @@ async function scrapeDarkWeb() {
 
     const total = abusechCount + ransomCount + otxCount + shodanCount;
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`✅ Dark web intel: ${total} new items in ${elapsed}s (abuse.ch: ${abusechCount}, ransomware: ${ransomCount}, OTX: ${otxCount}, Shodan: ${shodanCount})\n`);
+    console.log(`✅ Dark web intel: ${total} new items in ${elapsed}s (abuse.ch: ${abusechCount}, ransomware: ${ransomCount}, OTX: ${otxCount}, Shodan: ${shodanCount})`);
 
+    // Generate AI assessment if new items were found, or if no assessment exists
+    const db = getDb();
+    const hasAssesment = db.prepare('SELECT id FROM dark_web_assessment ORDER BY id DESC LIMIT 1').get();
+    if (total > 0 || !hasAssesment) {
+        await generateDarkWebAssessment();
+    }
+
+    console.log('\n');
     return total;
+}
+
+// ─── AI Threat Assessment Generation ────────────────────────────
+async function generateDarkWebAssessment() {
+    console.log('  🧠 Generating Dark Web AI Threat Assessment...');
+    const db = getDb();
+
+    try {
+        // Get the 15 most recent critical/high/medium threats
+        const recents = db.prepare(`
+            SELECT source, category, threat_level, title 
+            FROM dark_web_intel 
+            ORDER BY discovered_at DESC 
+            LIMIT 15
+        `).all();
+
+        if (recents.length === 0) {
+            db.prepare('INSERT INTO dark_web_assessment (assessment) VALUES (?)')
+                .run('No active dark web threats detected prominently at this time.');
+            return;
+        }
+
+        const dataContext = recents.map(r => `[${r.threat_level}] ${r.category} via ${r.source}: ${r.title}`).join('\\n');
+
+        const prompt = `You are a cybersecurity intelligence analyst writing a brief "Dark Web Threat Assessment" for a non-technical executive.
+Based on the following 15 recent dark web intelligence scrapes, write a concise 2 to 3 sentence summary of the current threat landscape. 
+Do not list individual IPs or URLs. Group threats by category (e.g., "Active ransomware campaigns are targeting X", or "Multiple botnet C2 servers detected").
+Keep it professional, alarming only if the data warrants it, and extremely concise (maximum 3 sentences).
+
+Recent Intel:
+${dataContext}`;
+
+        const client = getGroq();
+        if (!client) {
+            console.log('  ⏩ Groq client not initialized, skipping AI assessment.');
+            return;
+        }
+
+        const completion = await client.chat.completions.create({
+            messages: [{ role: "user", content: prompt }],
+            model: "llama-3.1-8b-instant",
+            temperature: 0.3,
+            max_tokens: 150,
+        });
+
+        let assessmentText = completion.choices[0]?.message?.content || 'Security assessment could not be generated at this time.';
+        assessmentText = assessmentText.replace(/\\*/g, ''); // Clean up bolding
+
+        db.prepare('DELETE FROM dark_web_assessment').run(); // Only keep the latest
+        db.prepare('INSERT INTO dark_web_assessment (assessment) VALUES (?)').run(assessmentText);
+
+        console.log(`  ✅ Assessment saved: "${assessmentText.substring(0, 60)}..."`);
+    } catch (err) {
+        console.error(`  ❌ Failed to generate AI assessment: ${err.message}`);
+    }
 }
 
 module.exports = { scrapeDarkWeb };

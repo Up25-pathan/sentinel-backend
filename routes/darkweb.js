@@ -71,10 +71,14 @@ router.get('/stats', (req, res) => {
             ORDER BY count DESC
         `).all();
 
+        const assessmentRow = db.prepare('SELECT assessment FROM dark_web_assessment ORDER BY id DESC LIMIT 1').get();
+        const assessment = assessmentRow ? assessmentRow.assessment : null;
+
         res.json({
             total: total?.count || 0,
             critical: critical?.count || 0,
             today: today?.count || 0,
+            assessment,
             byCategory,
             bySource,
         });

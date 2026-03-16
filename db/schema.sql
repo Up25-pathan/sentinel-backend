@@ -108,3 +108,41 @@ CREATE TABLE IF NOT EXISTS dark_web_intel (
     tags TEXT, -- JSON array
     discovered_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS dark_web_assessment (
+    id INTEGER PRIMARY KEY,
+    assessment TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- ─── PROJECT NEXUS (Advanced Relational Intelligence) ──────────
+
+-- Entities: Actors, Organizations, Facilities, etc.
+CREATE TABLE IF NOT EXISTS entities (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL, -- PERSON, ORG, GPE, FACILITY, WEAPON_SYSTEM, etc.
+    description TEXT,
+    influence_score REAL DEFAULT 0.0,
+    metadata_json TEXT, -- Alliances, social handles, technical specs
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+-- Nexus Links: The connective tissue of the graph
+CREATE TABLE IF NOT EXISTS nexus_links (
+    id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL, -- Entity or Event ID
+    target_id TEXT NOT NULL, -- Entity or Event ID
+    link_type TEXT NOT NULL, -- e.g., 'FUNDED_BY', 'ALLIED_WITH', 'PARTICIPATED_IN', 'THREATENS'
+    strength REAL DEFAULT 1.0, -- Confidence/Strength score (1-5)
+    evidence TEXT, -- Text snippet justifying the link
+    source_ref TEXT, -- URL or document reference
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+CREATE INDEX IF NOT EXISTS idx_nexus_source ON nexus_links(source_id);
+CREATE INDEX IF NOT EXISTS idx_nexus_target ON nexus_links(target_id);
+CREATE INDEX IF NOT EXISTS idx_nexus_type ON nexus_links(link_type);

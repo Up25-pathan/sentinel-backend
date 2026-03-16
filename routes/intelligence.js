@@ -120,4 +120,79 @@ router.get('/summary', (req, res) => {
     }
 });
 
+// ─── PROJECT NEXUS (Relational Intelligence) ──────────
+
+// GET /api/intelligence/nexus/graph — Full relational graph
+router.get('/nexus/graph', (req, res) => {
+    try {
+        const db = getDb();
+        const limit = parseInt(req.query.limit) || 100;
+
+        // Get recent events as nodes
+        const events = db.prepare(`
+            SELECT id, title as label, 'EVENT' as type, risk_level, category
+            FROM events
+            ORDER BY created_at DESC
+            LIMIT ?
+        `).all(limit / 2);
+
+        // Get high-influence entities as nodes
+        const entities = db.prepare(`
+            SELECT id, name as label, type, influence_score
+            FROM entities
+            ORDER BY influence_score DESC
+            LIMIT ?
+        `).all(limit / 2);
+
+        // Get links between them
+        const nodes = [...events, ...entities];
+        const nodeIds = nodes.map(n => n.id);
+
+        // Filter links where both source and target are in our node list
+        const placeholders = nodeIds.map(() => '?').join(',');
+        const links = db.prepare(`
+            SELECT source_id as source, target_id as target, link_type as label, strength
+            FROM nexus_links
+            WHERE source_id IN (${placeholders}) AND target_id IN (${placeholders})
+        `).all(...nodeIds, ...nodeIds);
+
+        res.json({ nodes, links });
+    } catch (err) {
+        console.error('Nexus graph error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// GET /api/intelligence/nexus/entity/:id — Detail for a specific entity
+router.get('/nexus/entity/:id', (req, res) => {
+    try {
+        const db = getDb();
+        const entity = db.prepare('SELECT * FROM entities WHERE id = ?').get(req.params.id);
+
+        if (!entity) {
+            return res.status(404).json({ error: 'Entity not found' });
+        }
+
+        // Get related links and their targets/sources
+        const links = db.prepare(`
+            SELECT l.*, 
+                   e_target.name as target_name, e_target.type as target_type,
+                   ev_target.title as target_event_title,
+                   e_source.name as source_name, e_source.type as source_type,
+                   ev_source.title as source_event_title
+            FROM nexus_links l
+            LEFT JOIN entities e_target ON l.target_id = e_target.id
+            LEFT JOIN events ev_target ON l.target_id = ev_target.id
+            LEFT JOIN entities e_source ON l.source_id = e_source.id
+            LEFT JOIN events ev_source ON l.source_id = ev_source.id
+            WHERE l.source_id = ? OR l.target_id = ?
+        `).all(req.params.id, req.params.id);
+
+        res.json({ entity, links });
+    } catch (err) {
+        console.error('Nexus entity error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = router;
