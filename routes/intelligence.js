@@ -195,4 +195,36 @@ router.get('/nexus/entity/:id', (req, res) => {
     }
 });
 
+// GET /api/intelligence/sector/:sector — Sector-specific dashboard data
+router.get('/sector/:sector', (req, res) => {
+    try {
+        const db = getDb();
+        const sector = req.params.sector.toUpperCase();
+        
+        let categories = [];
+        if (sector === 'DEFENSE') {
+            categories = ['WAR', 'MILITARY_MOVEMENT', 'DIPLOMATIC_ESCALATION', 'NUCLEAR_THREAT', 'TERRORISM'];
+        } else if (sector === 'ENERGY') {
+            categories = ['ENERGY_SECURITY', 'SANCTIONS', 'ECONOMIC_WARFARE'];
+        } else if (sector === 'CYBER') {
+            categories = ['CYBER_ATTACK', 'DARK_WEB'];
+        } else {
+            return res.status(400).json({ error: 'Invalid sector' });
+        }
+
+        const placeholders = categories.map(() => '?').join(',');
+        const events = db.prepare(`
+            SELECT * FROM events 
+            WHERE category IN (${placeholders})
+            ORDER BY created_at DESC
+            LIMIT 20
+        `).all(...categories);
+
+        res.json(events);
+    } catch (err) {
+        console.error('Sector intel error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = router;

@@ -146,3 +146,21 @@ CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
 CREATE INDEX IF NOT EXISTS idx_nexus_source ON nexus_links(source_id);
 CREATE INDEX IF NOT EXISTS idx_nexus_target ON nexus_links(target_id);
 CREATE INDEX IF NOT EXISTS idx_nexus_type ON nexus_links(link_type);
+
+-- ─── PREDICTIVE ENGINE (Second-Order Effects) ──────────
+
+CREATE TABLE IF NOT EXISTS predictions (
+    id TEXT PRIMARY KEY,
+    event_id TEXT,
+    cluster_id TEXT,
+    prediction_text TEXT NOT NULL,
+    probability REAL DEFAULT 0.5, -- 0.0 to 1.0
+    impact_level TEXT CHECK(impact_level IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW')),
+    categories_affected TEXT, -- JSON array
+    evidence_json TEXT, -- Supporting data points
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_predictions_event ON predictions(event_id);
+CREATE INDEX IF NOT EXISTS idx_predictions_cluster ON predictions(cluster_id);
+

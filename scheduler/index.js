@@ -95,13 +95,19 @@ function startScheduler() {
     });
 
     // Event clustering — every 30 minutes
-    cron.schedule('*/30 * * * *', () => {
+    cron.schedule('*/30 * * * *', async () => {
         console.log('─'.repeat(50));
         console.log(`[${new Date().toISOString()}] Running event clustering...`);
         try {
-            clusterEvents();
+            const clusterIds = clusterEvents();
+            
+            // Run prediction analysis for each new/updated cluster
+            const { generateClusterPredictions } = require('../services/prediction-engine');
+            for (const clusterId of clusterIds) {
+                await generateClusterPredictions(clusterId);
+            }
         } catch (err) {
-            console.error('❌ Clustering error:', err.message);
+            console.error('❌ Clustering/Prediction error:', err.message);
         }
     });
 

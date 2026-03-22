@@ -34,32 +34,39 @@ async function processEventNexus(event) {
 
     try {
         const prompt = `
-        You are NExUS (Network Extraction & Universal Synthesis), a state-of-the-art intelligence analyzer.
+        You are NExUS (Network Extraction & Universal Synthesis), the core relational engine for a Palantir-level intelligence platform.
         Target: "${event.title}"
         Summary: ${event.summary}
         Category: ${event.category}
         Location: ${event.location_name}, ${event.country}
 
-        TASK: Extract all key entities (People, Organizations, Groups, Infrastructure) and their relationships mentioned in or implied by this event.
-        
+        TASK: Extract all key entities and their relationships. 
+        Entities can be: PERSON, ORG (Company/Agency), GROUP (Rebel/Terrorist), GPE (Country/City), FACILITY, WEAPON_SYSTEM, or INFRASTRUCTURE.
+
+        RELATIONSHIP TYPES:
+        - CONTROLS / COMMANDS
+        - ALLIED_WITH / SUPPORTED_BY
+        - THREATENS / ATTACKED
+        - SUBSIDIZES / FINANCES
+        - LOCATED_IN
+        - PARTICIPATED_IN (for Event links)
+        - IMPACTS (for economic/social links)
+
         OUTPUT FORMAT (JSON ONLY):
         {
           "entities": [
-            {"name": "Vladimir Putin", "type": "PERSON", "description": "President of Russia"},
-            {"name": "Wagner Group", "type": "ORG", "description": "Private military contractor"}
+            {"name": "Entity Name", "type": "TYPE", "description": "Brief intelligence summary", "influence": 1-10}
           ],
           "links": [
-            {"source": "Vladimir Putin", "target": "Wagner Group", "type": "COMMANDS", "strength": 4, "evidence": "Implied chain of command in military operations"},
-            {"source": "Wagner Group", "target": "${event.id}", "type": "PARTICIPATED_IN", "strength": 5, "evidence": "Primary actor in the reported event"}
+            {"source": "Entity A", "target": "Entity B", "type": "REL_TYPE", "strength": 1-5, "evidence": "Brief justification"}
           ]
         }
 
-        Be precise. Use existing geopolitical knowledge to enrich the descriptions.
-        If the event ID is used as a target/source in links, use exactly "${event.id}".
+        Note: Use exactly "${event.id}" when linking an entity to this specific event.
         `;
 
         const completion = await client.chat.completions.create({
-            model: 'llama-3.1-70b-versatile', // Use a heavier model for better relational logic
+            model: 'llama-3.1-70b-versatile',
             messages: [{ role: 'user', content: prompt }],
             response_format: { type: 'json_object' },
             temperature: 0.1
@@ -72,12 +79,13 @@ async function processEventNexus(event) {
             for (const ent of nexusData.entities || []) {
                 const entityId = ent.name.toLowerCase().replace(/[^a-z0-9]/g, '_');
                 db.prepare(`
-                    INSERT INTO entities (id, name, type, description, updated_at)
-                    VALUES (?, ?, ?, ?, datetime('now'))
+                    INSERT INTO entities (id, name, type, description, influence_score, updated_at)
+                    VALUES (?, ?, ?, ?, ?, datetime('now'))
                     ON CONFLICT(id) DO UPDATE SET 
                         description = COALESCE(entities.description, excluded.description),
+                        influence_score = MAX(entities.influence_score, excluded.influence_score),
                         updated_at = datetime('now')
-                `).run(entityId, ent.name, ent.type, ent.description);
+                `).run(entityId, ent.name, ent.type, ent.description, ent.influence || 1.0);
 
                 // Update ent object with the generated ID for linking
                 ent.internal_id = entityId;

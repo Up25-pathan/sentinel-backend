@@ -35,31 +35,40 @@ router.get('/markers', (req, res) => {
     }
 });
 
-// GET /api/map/heatmap — Aggregated risk data by region
+// GET /api/map/heatmap — Weighted GPS data for risk density mapping
 router.get('/heatmap', (req, res) => {
     try {
         const db = getDb();
-
         const data = db.prepare(`
-            SELECT 
-                country,
-                COUNT(*) as event_count,
-                SUM(CASE WHEN risk_level = 'CRITICAL' THEN 4
-                         WHEN risk_level = 'HIGH' THEN 3
-                         WHEN risk_level = 'MEDIUM' THEN 2
-                         ELSE 1 END) as risk_score,
-                AVG(lat) as avg_lat,
-                AVG(lng) as avg_lng
-            FROM events 
-            WHERE lat IS NOT NULL AND lng IS NOT NULL
-            GROUP BY country
-            ORDER BY risk_score DESC
+            SELECT lat, lng,
+                (CASE WHEN risk_level = 'CRITICAL' THEN 1.0
+                      WHEN risk_level = 'HIGH' THEN 0.7
+                      WHEN risk_level = 'MEDIUM' THEN 0.4
+                      ELSE 0.2 END) + (escalation_score * 0.1) as weight
+            FROM events WHERE lat IS NOT NULL AND lng IS NOT NULL
+            ORDER BY created_at DESC LIMIT 1000
         `).all();
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: 'Heatmap failed' });
+    }
+});
 
+// GET /api/map/choropleth — Country-level risk shading (legacy compatibility)
+router.get('/choropleth', (req, res) => {
+    try {
+        const db = getDb();
+        const data = db.prepare(`
+            SELECT country, SUM(CASE WHEN risk_level = 'CRITICAL' THEN 4
+                                     WHEN risk_level = 'HIGH' THEN 3
+                                     WHEN risk_level = 'MEDIUM' THEN 2
+                                     ELSE 1 END) as risk_score
+            FROM events WHERE lat IS NOT NULL AND lng IS NOT NULL
+            GROUP BY country
+        `).all();
         res.json({ regions: data });
     } catch (err) {
-        console.error('Error fetching heatmap data:', err);
-        res.status(500).json({ error: 'Failed to fetch heatmap data' });
+        res.status(500).json({ error: 'Choropleth failed' });
     }
 });
 

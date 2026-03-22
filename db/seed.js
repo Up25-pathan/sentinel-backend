@@ -249,6 +249,50 @@ const EVENTS = [
     }
 ];
 
+const DARK_WEB_INTEL = [
+    {
+        source_id: 'abusech-101',
+        source: 'abuse.ch',
+        category: 'MALWARE',
+        title: 'Lumina Stealer C2 Active',
+        content: 'New Lumina Stealer C2 server detected at 104.21.75.12. Targeting European financial institutions with high-frequency credential harvesting observed in the last 6 hours.',
+        threat_level: 'HIGH',
+        url: 'https://urlhaus.abuse.ch/browse/',
+        tags: JSON.stringify(['lumina', 'stealer', 'finance'])
+    },
+    {
+        source_id: 'ransom-lockbit-1',
+        source: 'ransomware.live',
+        category: 'RANSOMWARE',
+        title: '[LockBit 3.0] Global Logistics Corp Victim Posted',
+        content: 'LockBit 3.0 has claimed responsibility for a breach at Global Logistics Corp. Estimated 4TB of data exfiltrated including client manifests and financial records. Deadline for payment: 48 hours.',
+        threat_level: 'CRITICAL',
+        url: 'http://lockbitapt2...onion/',
+        tags: JSON.stringify(['lockbit', 'logistics', 'extortion'])
+    },
+    {
+        source_id: 'shodan-ics-1',
+        source: 'Shodan',
+        category: 'EXPOSED_INFRA',
+        title: 'Exposed Siemens S7-1500 PLC in Industrial Zone',
+        content: 'Siemens S7 series PLC exposed on port 102. Located in Shenzhen Industrial District. No authentication required for program state access. Risk of industrial sabotage is high.',
+        threat_level: 'CRITICAL',
+        tags: JSON.stringify(['ics', 'scada', 'vuln'])
+    },
+    {
+        source_id: 'otx-pulse-1',
+        source: 'AlienVault OTX',
+        category: 'THREAT_INTEL',
+        title: 'Oil & Gas Sector Targetting by APT41',
+        content: 'Ongoing campaign against Middle Eastern energy firms. Using spear-phishing with malicious PDFs. Indicators include 15 new domain registrations mimicking regional regulators.',
+        threat_level: 'HIGH',
+        url: 'https://otx.alienvault.com/pulse/apt41-energy',
+        tags: JSON.stringify(['apt41', 'energy', 'phishing'])
+    }
+];
+
+const DARK_WEB_ASSESSMENT = "Relentless targeting of European financial hubs and Asian industrial infrastructure dominates the current landscape. LockBit 3.0 activity has surged by 15% this week, while exposed SCADA systems in manufacturing zones remain a critical vector for state-sponsored disruption.";
+
 function seed() {
     const db = getDb();
 
@@ -256,6 +300,10 @@ function seed() {
     db.exec('DELETE FROM alerts');
     db.exec('DELETE FROM sources');
     db.exec('DELETE FROM events');
+    db.exec('DELETE FROM dark_web_intel');
+    db.exec('DELETE FROM dark_web_assessment');
+    db.exec('DELETE FROM entities');
+    db.exec('DELETE FROM nexus_links');
 
     const insertEvent = db.prepare(`
         INSERT INTO events (id, title, summary, ai_brief, category, risk_level, 
@@ -274,12 +322,17 @@ function seed() {
         VALUES (?, ?, ?, ?, ?, ?)
     `);
 
+    const insertDarkWeb = db.prepare(`
+        INSERT INTO dark_web_intel (source_id, source, category, title, content, threat_level, url, tags, discovered_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `);
+
     const now = new Date();
 
     const transaction = db.transaction(() => {
+        // Events
         EVENTS.forEach((event, index) => {
             const eventId = uuidv4();
-            // Stagger event times over the past 48 hours
             const eventTime = new Date(now.getTime() - (index * 4 * 60 * 60 * 1000));
             const timeStr = eventTime.toISOString().replace('T', ' ').replace('Z', '');
 
@@ -302,7 +355,6 @@ function seed() {
                 timeStr
             );
 
-            // Insert sources
             event.sources.forEach(source => {
                 insertSource.run(
                     uuidv4(),
@@ -314,7 +366,6 @@ function seed() {
                 );
             });
 
-            // Generate alerts for breaking/critical events
             if (event.is_breaking || event.risk_level === 'CRITICAL') {
                 const alertType = event.is_breaking ? 'BREAKING' : 'CRITICAL';
                 const alertMessage = event.is_breaking
@@ -331,18 +382,45 @@ function seed() {
                 );
             }
         });
+
+        // Dark Web
+        DARK_WEB_INTEL.forEach(item => {
+            insertDarkWeb.run(
+                item.source_id,
+                item.source,
+                item.category,
+                item.title,
+                item.content,
+                item.threat_level,
+                item.url || '',
+                item.tags,
+            );
+        });
+
+        // Assessment
+        db.prepare('INSERT INTO dark_web_assessment (assessment) VALUES (?)').run(DARK_WEB_ASSESSMENT);
+
+        // --- Nexus Relational Seeds ---
+        // Insert some entities for the graph
+        const entities = [
+            { id: uuidv4(), name: 'LockBit 3.0', type: 'ORGANIZATION', metadata: JSON.stringify({ sector: 'Ransomware' }) },
+            { id: uuidv4(), name: 'APT41', type: 'ACTOR', metadata: JSON.stringify({ origin: 'CN' }) },
+            { id: uuidv4(), name: 'Siemens S7', type: 'ASSET', metadata: JSON.stringify({ class: 'PLC' }) },
+            { id: uuidv4(), name: 'Russian Navy', type: 'ORGANIZATION', metadata: JSON.stringify({ class: 'Military' }) }
+        ];
+
+        const insertEntity = db.prepare('INSERT INTO entities (id, name, type, metadata) VALUES (?, ?, ?, ?)');
+        entities.forEach(e => insertEntity.run(e.id, e.name, e.type, e.metadata));
     });
 
     transaction();
 
     const eventCount = db.prepare('SELECT COUNT(*) as count FROM events').get();
-    const sourceCount = db.prepare('SELECT COUNT(*) as count FROM sources').get();
-    const alertCount = db.prepare('SELECT COUNT(*) as count FROM alerts').get();
+    const dwCount = db.prepare('SELECT COUNT(*) as count FROM dark_web_intel').get();
 
     console.log(`\n🌍 Seed data loaded successfully:`);
     console.log(`   📰 ${eventCount.count} geopolitical events`);
-    console.log(`   📡 ${sourceCount.count} sources`);
-    console.log(`   🚨 ${alertCount.count} alerts\n`);
+    console.log(`   🕸️ ${dwCount.count} dark web items\n`);
 }
 
 if (require.main === module) {

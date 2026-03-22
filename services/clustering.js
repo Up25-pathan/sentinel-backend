@@ -39,6 +39,7 @@ function clusterEvents() {
 
     const updateCluster = db.prepare('UPDATE events SET cluster_id = ? WHERE id = ?');
     let clustersCreated = 0;
+    const clusterIds = [];
 
     // Simple proximity + category clustering
     const processed = new Set();
@@ -81,13 +82,14 @@ function clusterEvents() {
             });
             transaction();
             clustersCreated++;
+            clusterIds.push(clusterId);
         } else {
             processed.add(events[i].id);
         }
     }
 
     console.log(`✅ Clustering complete: ${clustersCreated} clusters identified.\n`);
-    return clustersCreated;
+    return clusterIds;
 }
 
 module.exports = { clusterEvents };

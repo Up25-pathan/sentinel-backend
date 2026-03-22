@@ -71,7 +71,7 @@ Source: ${article.source_name}
 
 Respond strictly matching this JSON schema:
 {
-    "category": "WAR|MILITARY_MOVEMENT|SANCTIONS|COUP|DIPLOMATIC_ESCALATION|NUCLEAR_THREAT|POLITICAL_INSTABILITY|TERRORISM|CYBER_ATTACK|HUMANITARIAN|OTHER",
+    "category": "WAR|MILITARY_MOVEMENT|SANCTIONS|COUP|DIPLOMATIC_ESCALATION|NUCLEAR_THREAT|POLITICAL_INSTABILITY|TERRORISM|CYBER_ATTACK|HUMANITARIAN|ENERGY_SECURITY|ECONOMIC_WARFARE|OTHER",
     "risk_level": "CRITICAL|HIGH|MEDIUM|LOW",
     "summary": "Create a distinct, sharp, 1-sentence headline/TL;DR summarizing the core event.",
     "ai_brief": "Write a massive, deep, multi-paragraph tactical intelligence brief. It must read like a classified military dossier. Analyze the strategic implications, historical context, potential motives, and immediate fallout. Minimum 3 paragraphs.",
