@@ -227,4 +227,36 @@ router.get('/sector/:sector', (req, res) => {
     }
 });
 
+// GET /api/intelligence/predictions — Forecast data
+router.get('/predictions', (req, res) => {
+    try {
+        const db = getDb();
+        const limit = parseInt(req.query.limit) || 10;
+        
+        // Pull predictions from the latest global briefing or dedicated event analysis
+        const briefing = db.prepare(`
+            SELECT macro_predictions_json FROM global_briefings 
+            ORDER BY created_at DESC LIMIT 1
+        `).get();
+        
+        if (!briefing || !briefing.macro_predictions_json) {
+            return res.json([]);
+        }
+        
+        let predictions = JSON.parse(briefing.macro_predictions_json);
+        
+        // Enrich predictions with new Gotham-level fields if they don't exist
+        predictions = predictions.map(p => ({
+            ...p,
+            timeline_estimate: p.timeline_estimate || 'Next 24-48h',
+            mitigation_protocol: p.mitigation_protocol || ['Increase regional SIGINT awareness', 'Alert local theater command']
+        }));
+
+        res.json(predictions.slice(0, limit));
+    } catch (err) {
+        console.error('Predictions error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 module.exports = router;
