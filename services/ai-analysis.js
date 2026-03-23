@@ -1,15 +1,42 @@
 /**
- * AI Analysis Pipeline
- * Uses OpenAI to classify, summarize, and extract entities from raw articles
+ * AI Analysis Pipeline (v2 — Local NLP First)
+ * Uses local NLP engine as primary (zero API calls)
+ * Optionally enhances CRITICAL events with Groq AI (budget-limited)
  */
 const Groq = require('groq-sdk');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
 const { fetchEventImages } = require('./image-scraper');
-const { processEventNexus } = require('./nexus');
+const { analyzeLocal, extractNexusEntities } = require('./local-nlp');
+const { processEventNexusLocal } = require('./nexus');
 require('dotenv').config();
 
 let groq = null;
+
+// ─── AI Budget Limiter ──────────────────────────────────────────
+// Only allow max AI_DAILY_BUDGET calls per day to prevent quota exhaustion
+const AI_DAILY_BUDGET = parseInt(process.env.AI_DAILY_BUDGET) || 20;
+let aiCallsToday = 0;
+let lastResetDate = new Date().toDateString();
+
+function checkAndResetBudget() {
+    const today = new Date().toDateString();
+    if (today !== lastResetDate) {
+        aiCallsToday = 0;
+        lastResetDate = today;
+        console.log('🔄 AI budget reset for new day.');
+    }
+}
+
+function canUseAI() {
+    checkAndResetBudget();
+    return aiCallsToday < AI_DAILY_BUDGET;
+}
+
+function recordAICall() {
+    aiCallsToday++;
+    console.log(`  💰 AI Budget: ${aiCallsToday}/${AI_DAILY_BUDGET} calls used today.`);
+}
 
 function getGroq() {
     if (!groq && process.env.GROQ_API_KEY) {
@@ -18,90 +45,69 @@ function getGroq() {
     return groq;
 }
 
-// Fallback analysis when OpenAI is not configured
-function fallbackAnalysis(article) {
-    const text = `${article.title} ${article.description}`.toLowerCase();
-
-    // Simple keyword-based classification
-    let category = 'OTHER';
-    let risk_level = 'LOW';
-
-    if (/war|combat|battle|fighting|offensive/.test(text)) { category = 'WAR'; risk_level = 'CRITICAL'; }
-    else if (/military|troops|deploy|navy|airforce|army/.test(text)) { category = 'MILITARY_MOVEMENT'; risk_level = 'HIGH'; }
-    else if (/sanction|embargo|restrict|ban|freeze/.test(text)) { category = 'SANCTIONS'; risk_level = 'HIGH'; }
-    else if (/coup|overthrow|seize|junta|takeover/.test(text)) { category = 'COUP'; risk_level = 'CRITICAL'; }
-    else if (/nuclear|atomic|warhead|enrichment|icbm/.test(text)) { category = 'NUCLEAR_THREAT'; risk_level = 'CRITICAL'; }
-    else if (/diplomat|ambassador|negotiat|summit|talks/.test(text)) { category = 'DIPLOMATIC_ESCALATION'; risk_level = 'MEDIUM'; }
-    else if (/terror|bomb|explosion|attack|suicide/.test(text)) { category = 'TERRORISM'; risk_level = 'HIGH'; }
-    else if (/cyber|hack|breach|malware|ransomware/.test(text)) { category = 'CYBER_ATTACK'; risk_level = 'HIGH'; }
-    else if (/protest|unrest|riot|uprising|destabili/.test(text)) { category = 'POLITICAL_INSTABILITY'; risk_level = 'MEDIUM'; }
-    else if (/humanitarian|famine|refugee|displacement|aid/.test(text)) { category = 'HUMANITARIAN'; risk_level = 'MEDIUM'; }
-
-    return {
-        category,
-        risk_level,
-        summary: article.description || article.title,
-        ai_brief: `Intelligence assessment: ${article.title}. Category: ${category}. Risk: ${risk_level}. Source: ${article.source_name}.`,
-        entities: { countries: [], cities: [], leaders: [], organizations: [] },
-        location_name: null,
-        lat: null,
-        lng: null
-    };
-}
-
 /**
- * Analyze a single article using OpenAI
+ * Enhance with AI only for high-value events (budget-limited)
  */
-async function analyzeWithAI(article) {
+async function enhanceWithAI(article, localAnalysis) {
     const ai = getGroq();
+    if (!ai || !canUseAI()) return localAnalysis;
 
-    if (!ai) {
-        return fallbackAnalysis(article);
+    // Only spend AI budget on CRITICAL/HIGH risk events
+    if (localAnalysis.risk_level !== 'CRITICAL' && localAnalysis.risk_level !== 'HIGH') {
+        return localAnalysis;
     }
 
     try {
         const prompt = `
-You are a senior military intelligence officer stationed at a global command center. Your job is to analyze incoming raw situational data (often fragmented or biased) and produce actionable, highly detailed tactical intelligence briefs.
-
-Respond with ONLY valid JSON. Absolutely NO markdown formatting, NO code block ticks.
+You are a senior military intelligence officer. Analyze this event and provide a deep intelligence brief.
+Respond with ONLY valid JSON. NO markdown formatting.
 
 Title: ${article.title}
 Description: ${article.description}
 Source: ${article.source_name}
+Local Analysis Category: ${localAnalysis.category}
+Local Analysis Risk: ${localAnalysis.risk_level}
+Detected Entities: ${JSON.stringify(localAnalysis.entities)}
 
 Respond strictly matching this JSON schema:
 {
-    "category": "WAR|MILITARY_MOVEMENT|SANCTIONS|COUP|DIPLOMATIC_ESCALATION|NUCLEAR_THREAT|POLITICAL_INSTABILITY|TERRORISM|CYBER_ATTACK|HUMANITARIAN|ENERGY_SECURITY|ECONOMIC_WARFARE|OTHER",
-    "risk_level": "CRITICAL|HIGH|MEDIUM|LOW",
-    "summary": "Create a distinct, sharp, 1-sentence headline/TL;DR summarizing the core event.",
-    "ai_brief": "Write a massive, deep, multi-paragraph tactical intelligence brief. It must read like a classified military dossier. Analyze the strategic implications, historical context, potential motives, and immediate fallout. Minimum 3 paragraphs.",
-    "escalation_score": 0-100 (integer representing probability of near-term kinetic escalation),
-    "second_order_effects": ["Geopolitical Effect 1", "Economic Effect 2", "Strategic Effect 3"],
-    "bias_analysis": "Sentence evaluating potential reporting bias or state narrative of the source.",
-    "entities": {
-        "countries": ["list of countries"],
-        "cities": ["list of cities"],
-        "leaders": ["list of leaders/officials"],
-        "organizations": ["list of organizations"]
-    },
-    "location_name": "Primary location name",
-    "lat": latitude_number_or_null,
-    "lng": longitude_number_or_null
+    "ai_brief": "Write a massive, deep, multi-paragraph tactical intelligence brief. Minimum 3 paragraphs.",
+    "escalation_score": 0-100,
+    "second_order_effects": ["Effect 1", "Effect 2", "Effect 3"],
+    "bias_analysis": "Source reliability assessment.",
+    "location_name": "Most specific location name",
+    "lat": latitude_or_null,
+    "lng": longitude_or_null
 }`;
 
         const response = await ai.chat.completions.create({
             model: 'llama-3.1-8b-instant',
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.3,
-            max_tokens: 800,
+            max_tokens: 600,
             response_format: { type: 'json_object' }
         });
 
-        const rawText = response.choices[0].message.content;
-        return JSON.parse(rawText.trim());
+        recordAICall();
+        const aiResult = JSON.parse(response.choices[0].message.content.trim());
+
+        // Merge AI enhancements with local analysis (local provides structure, AI provides depth)
+        return {
+            ...localAnalysis,
+            ai_brief: aiResult.ai_brief || localAnalysis.ai_brief,
+            escalation_score: aiResult.escalation_score || localAnalysis.escalation_score,
+            second_order_effects: aiResult.second_order_effects?.length > 0
+                ? aiResult.second_order_effects
+                : localAnalysis.second_order_effects,
+            bias_analysis: aiResult.bias_analysis || localAnalysis.bias_analysis,
+            // Only override geo if AI provides and local didn't
+            lat: localAnalysis.lat || aiResult.lat,
+            lng: localAnalysis.lng || aiResult.lng,
+            location_name: localAnalysis.location_name || aiResult.location_name,
+        };
     } catch (err) {
-        console.warn('  ⚠️ Groq analysis failed, using fallback:', err.message);
-        return fallbackAnalysis(article);
+        console.warn('  ⚠️ AI enhancement failed, using local analysis:', err.message);
+        return localAnalysis;
     }
 }
 
@@ -123,7 +129,9 @@ async function processArticles(batchSize = 10) {
         return 0;
     }
 
-    console.log(`\n🧠 Analyzing ${articles.length} articles...`);
+    console.log(`\n🧠 Analyzing ${articles.length} articles (Local NLP + optional AI)...`);
+    checkAndResetBudget();
+    console.log(`  💰 AI Budget: ${aiCallsToday}/${AI_DAILY_BUDGET} used today.`);
 
     const insertEvent = db.prepare(`
         INSERT INTO events (id, title, summary, ai_brief, category, risk_level, 
@@ -143,22 +151,27 @@ async function processArticles(batchSize = 10) {
 
     for (const article of articles) {
         try {
-            const analysis = await analyzeWithAI(article);
+            // Step 1: Local NLP analysis (instant, free)
+            const localAnalysis = analyzeLocal(article);
 
-            if (analysis.category === 'OTHER') {
+            // Skip non-geopolitical events
+            if (localAnalysis.category === 'OTHER') {
                 markProcessed.run(article.id);
                 continue;
             }
+
+            // Step 2: Optional AI enhancement (budget-limited, only for critical events)
+            const analysis = await enhanceWithAI(article, localAnalysis);
 
             const eventId = uuidv4();
             const now = new Date().toISOString().replace('T', ' ').replace('Z', '');
             const isBreaking = ['CRITICAL'].includes(analysis.risk_level) ? 1 : 0;
 
-            // Extract country from entities
-            const country = analysis.entities?.countries?.[0] || null;
+            // Country from analysis
+            const country = analysis.country || analysis.entities?.countries?.[0] || null;
 
-            // Fetch extra context images via Headless Scraper
-            const searchQuery = `${analysis.location_name || country || ''} ${analysis.category.replace('_', ' ')} geopolitical conflict`.trim();
+            // Fetch extra images
+            const searchQuery = `${analysis.location_name || country || ''} ${analysis.category.replace('_', ' ')} geopolitical`.trim();
             const images = await fetchEventImages(searchQuery);
 
             insertEvent.run(
@@ -183,16 +196,15 @@ async function processArticles(batchSize = 10) {
                 now
             );
 
-            // ─── PROJECT NEXUS: Relational Mapping ──────────
-            // Fire and forget (don't block the main analysis loop)
-            processEventNexus({
+            // Step 3: Local Nexus entity extraction (instant, free)
+            processEventNexusLocal({
                 id: eventId,
                 title: article.title,
                 summary: analysis.summary,
                 category: analysis.category,
                 location_name: analysis.location_name,
                 country: country
-            }).catch(err => console.error(`  ⚠️ Nexus failed for ${eventId}:`, err.message));
+            });
 
             insertSource.run(
                 uuidv4(),
@@ -206,13 +218,9 @@ async function processArticles(batchSize = 10) {
             markProcessed.run(article.id);
             processed++;
 
-            console.log(`  ✅ ${analysis.category} [${analysis.risk_level}]: ${article.title.substring(0, 60)}...`);
+            const aiTag = analysis.ai_brief !== localAnalysis?.ai_brief ? '🧠AI+' : '⚡NLP';
+            console.log(`  ✅ [${aiTag}] ${analysis.category} [${analysis.risk_level}]: ${article.title.substring(0, 55)}...`);
 
-            // Groq has 14,400 Requests/Day and 30 RPM on the free tier.
-            // 2 second delay keeps us exactly at 30 RPM without exhausting the massive daily limit.
-            if (processed < articles.length && process.env.GROQ_API_KEY) {
-                await new Promise(resolve => setTimeout(resolve, 2050));
-            }
         } catch (err) {
             console.error(`  ❌ Failed to analyze: ${article.title} `, err.message);
             markProcessed.run(article.id);
@@ -223,4 +231,4 @@ async function processArticles(batchSize = 10) {
     return processed;
 }
 
-module.exports = { processArticles, analyzeWithAI };
+module.exports = { processArticles, enhanceWithAI, analyzeLocal };

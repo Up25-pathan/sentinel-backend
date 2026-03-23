@@ -1,6 +1,6 @@
 /**
- * Job Scheduler
- * Runs intelligence pipeline tasks on cron schedules
+ * Job Scheduler (v2 — Budget-Aware)
+ * Local NLP runs freely, AI runs only within daily budget
  */
 const cron = require('node-cron');
 const { ingestNews } = require('../services/ingestion');
@@ -15,8 +15,7 @@ const { generateDailyBriefing } = require('../services/daily-briefing');
 const { scrapeDarkWeb } = require('../services/dark-web-scraper');
 
 function startScheduler() {
-    // ─── 6. Daily Briefing ─────────────────────────────────
-    // Run at 6 AM UTC daily + every 12 hours
+    // ─── Daily Briefing (6 AM + 6 PM UTC) ────────────────────
     cron.schedule('0 6,18 * * *', async () => {
         console.log('\n📋 Running Daily Briefing...');
         try {
@@ -26,26 +25,26 @@ function startScheduler() {
         }
     });
 
-    console.log('⏰ Starting intelligence scheduler...\n');
+    console.log('⏰ Starting intelligence scheduler (v2 — Local NLP Primary)...\n');
 
-    // Run initial ingestion immediately
+    // ─── Initial Boot Sequence ────────────────────────────────
     console.log(`[${new Date().toISOString()}] Running initial news ingestion...`);
     ingestNews().then(async () => {
-        console.log(`[${new Date().toISOString()}] Generating initial intelligence events...`);
+        console.log(`[${new Date().toISOString()}] Processing articles with Local NLP...`);
         try {
-            await processArticles(10);
+            await processArticles(15); // Process more articles since NLP is free
         } catch (err) {
             console.error('❌ Initial Analysis error:', err.message);
         }
 
-        // Run initial macro analysis exactly 1 minute after boot (so events have populated)
+        // Generate initial macro briefing 30 seconds after boot
         setTimeout(() => {
-            console.log(`[${new Date().toISOString()}] Generating Initial Global AI Briefing...`);
+            console.log(`[${new Date().toISOString()}] Generating Initial Data-Driven Briefing...`);
             runMacroAnalysis().catch(err => console.error('❌ Initial Macro Analysis error:', err.message));
-        }, 60000);
+        }, 30000);
     }).catch(err => console.error('❌ Initial ingestion error:', err.message));
 
-    // News ingestion — every 15 minutes
+    // ─── News ingestion — every 15 minutes ────────────────────
     cron.schedule('*/15 * * * *', async () => {
         console.log('─'.repeat(50));
         console.log(`[${new Date().toISOString()}] Running news ingestion...`);
@@ -56,10 +55,10 @@ function startScheduler() {
         }
     });
 
-    // OSINT Ingestion (Telegram + X) — every 5 minutes (faster than RSS)
+    // ─── OSINT Ingestion — every 5 minutes ────────────────────
     cron.schedule('*/5 * * * *', async () => {
         console.log('─'.repeat(50));
-        console.log(`[${new Date().toISOString()}] Running OSINT ingestion (Telegram & X)...`);
+        console.log(`[${new Date().toISOString()}] Running OSINT ingestion...`);
         try {
             await scrapeTelegramChannels();
             await scrapeXAccounts();
@@ -70,12 +69,12 @@ function startScheduler() {
         }
     });
 
-    // AI analysis — every 5 minutes
+    // ─── Article Analysis (Local NLP) — every 5 minutes ───────
     cron.schedule('*/5 * * * *', async () => {
         console.log('─'.repeat(50));
-        console.log(`[${new Date().toISOString()}] Running AI analysis...`);
+        console.log(`[${new Date().toISOString()}] Running Local NLP analysis...`);
         try {
-            await processArticles(10);
+            await processArticles(15);
             generateAlerts();
             checkWatchlists();
         } catch (err) {
@@ -83,10 +82,10 @@ function startScheduler() {
         }
     });
 
-    // Global AI Briefing — every 60 minutes
+    // ─── Data-Driven Macro Briefing — every 60 minutes ────────
     cron.schedule('0 * * * *', async () => {
         console.log('─'.repeat(50));
-        console.log(`[${new Date().toISOString()}] Generating Global AI Briefing...`);
+        console.log(`[${new Date().toISOString()}] Generating Data-Driven Briefing...`);
         try {
             await runMacroAnalysis();
         } catch (err) {
@@ -94,14 +93,13 @@ function startScheduler() {
         }
     });
 
-    // Event clustering — every 30 minutes
+    // ─── Event clustering — every 30 minutes ──────────────────
     cron.schedule('*/30 * * * *', async () => {
         console.log('─'.repeat(50));
         console.log(`[${new Date().toISOString()}] Running event clustering...`);
         try {
             const clusterIds = clusterEvents();
             
-            // Run prediction analysis for each new/updated cluster
             const { generateClusterPredictions } = require('../services/prediction-engine');
             for (const clusterId of clusterIds) {
                 await generateClusterPredictions(clusterId);
@@ -111,13 +109,13 @@ function startScheduler() {
         }
     });
 
-    console.log('  📰 RSS News ingestion: every 15 minutes');
-    console.log('  📱 OSINT (TG, X, Reddit): every 5 minutes');
-    console.log('  🧠 AI analysis:      every 5 minutes');
-    console.log('  🌍 Global AI Briefing: every 60 minutes');
-    console.log('  🔗 Event clustering: every 30 minutes');
-    console.log('  📋 Daily Briefing:   6 AM + 6 PM UTC');
-    console.log('  🚨 Alert generation: after each analysis\n');
+    console.log('  📰 RSS News ingestion:     every 15 minutes');
+    console.log('  📱 OSINT (TG, X, Reddit):  every 5 minutes');
+    console.log('  ⚡ Local NLP analysis:     every 5 minutes (FREE)');
+    console.log('  🌍 Data-Driven Briefing:   every 60 minutes (FREE)');
+    console.log('  🔗 Event clustering:       every 30 minutes');
+    console.log('  📋 Daily Briefing:         6 AM + 6 PM UTC');
+    console.log('  🧠 AI Enhancement:         budget-limited (auto)\n');
 }
 
 module.exports = { startScheduler };

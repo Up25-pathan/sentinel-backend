@@ -233,7 +233,6 @@ router.get('/predictions', (req, res) => {
         const db = getDb();
         const limit = parseInt(req.query.limit) || 10;
         
-        // Pull predictions from the latest global briefing or dedicated event analysis
         const briefing = db.prepare(`
             SELECT macro_predictions_json FROM global_briefings 
             ORDER BY created_at DESC LIMIT 1
@@ -243,18 +242,179 @@ router.get('/predictions', (req, res) => {
             return res.json([]);
         }
         
-        let predictions = JSON.parse(briefing.macro_predictions_json);
+        let rawPredictions = JSON.parse(briefing.macro_predictions_json);
         
-        // Enrich predictions with new Gotham-level fields if they don't exist
-        predictions = predictions.map(p => ({
-            ...p,
-            timeline_estimate: p.timeline_estimate || 'Next 24-48h',
-            mitigation_protocol: p.mitigation_protocol || ['Increase regional SIGINT awareness', 'Alert local theater command']
-        }));
+        // Normalize: handle both string arrays (from local NLP) and object arrays (from AI)
+        const predictions = rawPredictions.map((p, i) => {
+            if (typeof p === 'string') {
+                return {
+                    prediction_text: p,
+                    impact_level: i === 0 ? 'HIGH' : 'MEDIUM',
+                    probability: 0.65 - (i * 0.1),
+                    timeline_estimate: 'Next 24-48h',
+                };
+            }
+            return {
+                ...p,
+                timeline_estimate: p.timeline_estimate || 'Next 24-48h',
+            };
+        });
 
         res.json(predictions.slice(0, limit));
     } catch (err) {
         console.error('Predictions error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// GET /api/intelligence/dashboard — Command center aggregated stats
+router.get('/dashboard', (req, res) => {
+    try {
+        const db = getDb();
+
+        // Event counts
+        const totalEvents = db.prepare('SELECT COUNT(*) as count FROM events').get().count;
+        const criticalEvents = db.prepare("SELECT COUNT(*) as count FROM events WHERE risk_level = 'CRITICAL'").get().count;
+        const highEvents = db.prepare("SELECT COUNT(*) as count FROM events WHERE risk_level = 'HIGH'").get().count;
+        const breakingEvents = db.prepare("SELECT COUNT(*) as count FROM events WHERE is_breaking = 1").get().count;
+        const last24h = db.prepare("SELECT COUNT(*) as count FROM events WHERE created_at > datetime('now', '-1 day')").get().count;
+
+        // Unread alerts
+        const unreadAlerts = db.prepare("SELECT COUNT(*) as count FROM alerts WHERE is_read = 0").get().count;
+
+        // Entity counts
+        const totalEntities = db.prepare('SELECT COUNT(*) as count FROM entities').get().count;
+        const totalLinks = db.prepare('SELECT COUNT(*) as count FROM nexus_links').get().count;
+
+        // Latest global risk
+        const latestBriefing = db.prepare(`
+            SELECT global_risk_score, created_at FROM global_briefings 
+            WHERE id NOT LIKE 'daily-%'
+            ORDER BY created_at DESC LIMIT 1
+        `).get();
+
+        // Category distribution
+        const categoryDist = db.prepare(`
+            SELECT category, COUNT(*) as count FROM events 
+            WHERE category IS NOT NULL
+            GROUP BY category 
+            ORDER BY count DESC
+        `).all();
+
+        // Top countries
+        const topCountries = db.prepare(`
+            SELECT country, COUNT(*) as count FROM events 
+            WHERE country IS NOT NULL
+            GROUP BY country 
+            ORDER BY count DESC 
+            LIMIT 10
+        `).all();
+
+        // Data sources (count distinct source names)
+        const activeSources = db.prepare('SELECT COUNT(DISTINCT name) as count FROM sources').get().count;
+
+        // Risk trend (last 7 days)
+        const riskTrend = db.prepare(`
+            SELECT 
+                DATE(created_at) as date,
+                COUNT(*) as total,
+                SUM(CASE WHEN risk_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical,
+                SUM(CASE WHEN risk_level = 'HIGH' THEN 1 ELSE 0 END) as high,
+                SUM(CASE WHEN risk_level = 'MEDIUM' THEN 1 ELSE 0 END) as medium,
+                SUM(CASE WHEN risk_level = 'LOW' THEN 1 ELSE 0 END) as low
+            FROM events 
+            WHERE created_at > datetime('now', '-7 days')
+            GROUP BY DATE(created_at)
+            ORDER BY date ASC
+        `).all();
+
+        res.json({
+            overview: {
+                total_events: totalEvents,
+                critical_events: criticalEvents,
+                high_events: highEvents,
+                breaking_events: breakingEvents,
+                events_last_24h: last24h,
+                unread_alerts: unreadAlerts,
+                global_risk_score: latestBriefing?.global_risk_score || 0,
+                last_briefing: latestBriefing?.created_at || null,
+                total_entities: totalEntities,
+                total_nexus_links: totalLinks,
+                active_sources: activeSources,
+            },
+            category_distribution: categoryDist,
+            top_countries: topCountries,
+            risk_trend: riskTrend,
+        });
+    } catch (err) {
+        console.error('Dashboard error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// GET /api/intelligence/pattern — Detect anomalies/patterns in recent events
+router.get('/pattern', (req, res) => {
+    try {
+        const db = getDb();
+        // Spikes: multiple events in a country in the last 24h
+        const spikeCountries = db.prepare(`
+            SELECT country, COUNT(*) as count 
+            FROM events 
+            WHERE created_at > datetime('now', '-24 hours') AND country IS NOT NULL
+            GROUP BY country
+            HAVING count > 3
+            ORDER BY count DESC
+            LIMIT 5
+        `).all();
+
+        // Correlations: pairs of entities frequently linked to the same recent events
+        const recentEvents = db.prepare(`SELECT id FROM events WHERE created_at > datetime('now', '-48 hours')`).all().map(e => e.id);
+        const placeholders = recentEvents.map(() => '?').join(',');
+        
+        let relatedPairs = [];
+        if (recentEvents.length > 0) {
+            relatedPairs = db.prepare(`
+                SELECT e1.name as entity1, e2.name as entity2, COUNT(*) as sync_count
+                FROM nexus_links l1
+                JOIN nexus_links l2 ON l1.source_id = l2.source_id AND l1.target_id != l2.target_id
+                JOIN entities e1 ON l1.target_id = e1.id
+                JOIN entities e2 ON l2.target_id = e2.id
+                WHERE l1.source_id IN (${placeholders})
+                GROUP BY e1.name, e2.name
+                HAVING sync_count > 1
+                ORDER BY sync_count DESC
+                LIMIT 5
+            `).all(...recentEvents);
+        }
+
+        res.json({
+            anomalous_locations: spikeCountries,
+            entity_correlations: relatedPairs
+        });
+    } catch (err) {
+        console.error('Pattern api error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// GET /api/intelligence/timeline/:entityId — Timeline of events for an entity
+router.get('/timeline/:entityId', (req, res) => {
+    try {
+        const db = getDb();
+        const entityId = req.params.entityId;
+
+        const timeline = db.prepare(`
+            SELECT DISTINCT ev.* 
+            FROM events ev
+            JOIN nexus_links l ON ev.id = l.source_id 
+            WHERE l.target_id = ?
+            ORDER BY ev.created_at DESC
+            LIMIT 20
+        `).all(entityId);
+
+        res.json(timeline);
+    } catch (err) {
+        console.error('Timeline error:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
