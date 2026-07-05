@@ -1,24 +1,47 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel
-from PyQt6.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QScrollArea
+from PyQt6.QtCore import Qt, pyqtSignal
 
 NAV_ITEMS = [
-    ("dashboard", "\u25B6", "DASH", "Dashboard"),
-    ("intel",     "\u2691", "INTL", "Intel Events"),
-    ("osint",     "\u2606", "OSNT", "OSINT Feeds"),
-    ("darkweb",   "\u2622", "DWEB", "Dark Web"),
-    ("alerts",    "\u26A0", "ALRT", "Alerts"),
-    ("map",       "\u2630", "MAP",  "Geo Map"),
-    ("chat",      "\u2709", "CHAT", "AI Chat"),
-    ("feeds",     "\u2690", "THRT", "Threat Feeds"),
-    ("timeline",  "\u29D6", "TIME", "Timeline"),
-    ("scanner",   "\u26ED", "SCAN", "Scanner"),
-    ("vulndb",    "\u269B", "VULN", "Vuln DB"),
-    ("assets",    "\u2699", "ASST", "Assets"),
-    ("export",    "\u21E9", "RPRT", "Export"),
-    ("redops",    "\u2694", "OPS",  "Red Ops"),
-    ("campaign",  "\u269C", "CAMP", "Campaigns"),
-    ("audit",     "\u2693", "AUDT", "Audit"),
+    ("__group", None, "INTEL"),
+    ("dashboard", "\u25B6", "DASH"),
+    ("intel",     "\u2691", "INTL"),
+    ("osint",     "\u2606", "OSNT"),
+    ("darkweb",   "\u2622", "DWEB"),
+    ("alerts",    "\u26A0", "ALRT"),
+    ("__group", None, "ANALYSIS"),
+    ("map",       "\u2630", "MAP"),
+    ("chat",      "\u2709", "CHAT"),
+    ("feeds",     "\u2690", "THRT"),
+    ("timeline",  "\u29D6", "TIME"),
+    ("__group", None, "OPS"),
+    ("scanner",   "\u26ED", "SCAN"),
+    ("vulndb",    "\u269B", "VULN"),
+    ("assets",    "\u2699", "ASST"),
+    ("export",    "\u21E9", "RPRT"),
+    ("__group", None, "CMD"),
+    ("redops",    "\u2694", "OPS"),
+    ("campaign",  "\u269C", "CAMP"),
+    ("audit",     "\u2693", "AUDT"),
 ]
+
+TOOLTIPS = {
+    "dashboard": "Dashboard",
+    "intel": "Intel Events",
+    "osint": "OSINT Feeds",
+    "darkweb": "Dark Web",
+    "alerts": "Alerts",
+    "map": "Geo Map",
+    "chat": "AI Chat",
+    "feeds": "Threat Feeds",
+    "timeline": "Timeline",
+    "scanner": "Network Scanner",
+    "vulndb": "Vuln Database",
+    "assets": "Assets Tracker",
+    "export": "Export / Reports",
+    "redops": "Red Ops",
+    "campaign": "Campaigns",
+    "audit": "Audit Log",
+}
 
 class Sidebar(QWidget):
     navigationChanged = pyqtSignal(str)
@@ -26,8 +49,17 @@ class Sidebar(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("Sidebar")
-        self.setFixedWidth(76)
-        layout = QVBoxLayout(self)
+        self.setFixedWidth(68)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; } QScrollBar:vertical { width: 0px; }")
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
@@ -38,11 +70,17 @@ class Sidebar(QWidget):
 
         self.buttons = {}
         self._group = []
-        for key, icon, label, tooltip in NAV_ITEMS:
-            btn = QPushButton(f"{icon}  {label}")
-            btn.setToolTip(tooltip)
+        for key, icon, label in NAV_ITEMS:
+            if key == "__group":
+                sep = QLabel(label)
+                sep.setObjectName("SidebarGroup")
+                sep.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                layout.addWidget(sep)
+                continue
+            btn = QPushButton(f"{icon}{label}")
+            btn.setToolTip(TOOLTIPS.get(key, ""))
             btn.setCheckable(True)
-            btn.setFixedHeight(36)
+            btn.setFixedHeight(26)
             btn.clicked.connect(lambda checked, k=key: self._on_nav(k))
             layout.addWidget(btn)
             self.buttons[key] = btn
@@ -52,8 +90,15 @@ class Sidebar(QWidget):
 
         ver = QLabel("v2.1")
         ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ver.setStyleSheet("color: #1e293b; font-size: 7pt; padding: 8px 0px;")
+        ver.setStyleSheet("color: #1e293b; font-size: 6pt; padding: 6px 0px;")
         layout.addWidget(ver)
+
+        scroll.setWidget(container)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(scroll)
 
     def _on_nav(self, key):
         for k, btn in self.buttons.items():

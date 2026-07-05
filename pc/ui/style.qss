@@ -63,47 +63,60 @@ QMainWindow {
 #Sidebar {
     background-color: #0a0c12;
     border-right: 1px solid #1a1e2e;
-    min-width: 76px;
-    max-width: 76px;
+    min-width: 68px;
+    max-width: 68px;
 }
 
 #Sidebar QPushButton {
-    font-size: 7pt;
+    font-size: 6.5pt;
     letter-spacing: 1px;
-    padding: 6px 4px;
-    text-align: left;
-    border-left: 3px solid transparent;
+    padding: 3px 2px;
+    text-align: center;
+    border-left: 2px solid transparent;
     border-right: none;
     border-top: none;
-    border-bottom: 1px solid #0f121a;
+    border-bottom: none;
     border-radius: 0px;
     color: #475569;
-    min-height: 36px;
+    min-height: 26px;
+    max-height: 26px;
     background-color: transparent;
+    margin: 0px 2px;
 }
 
 #Sidebar QPushButton:hover {
     background-color: #11151f;
     color: #94a3b8;
-    border-left: 3px solid #475569;
+    border-left: 2px solid #475569;
 }
 
 #Sidebar QPushButton:checked {
     background-color: #11151f;
     color: #f59e0b;
     font-weight: 700;
-    border-left: 3px solid #f59e0b;
-    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+    border-left: 2px solid #f59e0b;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
         stop: 0 #1a1510, stop: 1 #11151f);
 }
 
 #Sidebar QLabel#SidebarTitle {
-    font-size: 9pt;
+    font-size: 8pt;
     font-weight: 700;
     color: #f59e0b;
     letter-spacing: 4px;
-    padding: 14px 10px 4px 10px;
+    padding: 10px 6px 2px 6px;
     border-bottom: 1px solid #1a1e2e;
+}
+
+#Sidebar QLabel#SidebarGroup {
+    font-size: 6pt;
+    font-weight: 600;
+    color: #1e293b;
+    letter-spacing: 2px;
+    padding: 6px 0px 2px 0px;
+    margin: 4px 6px 0px 6px;
+    border-top: 1px solid #0f121a;
+    background: transparent;
 }
 
 /* ─── CONTENT AREA ───────────────────────────────────────────── */
