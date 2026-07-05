@@ -29,27 +29,18 @@ const PORT = process.env.PORT || 3001;
 
 // ─── Rate Limiting ─────────────────────────────────────────────
 const generalLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
+    windowMs: 60 * 1000,
+    max: 60,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests, please try again later.' }
 });
 
 const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 10,
+    windowMs: 60 * 1000,
+    max: 20,
     message: { error: 'Too many login attempts. Try again in 15 minutes.' }
 });
-
-// ─── Middleware ─────────────────────────────────────────────────
-app.use(helmet());
-app.use(cors());
-app.use(express.json());
-app.use(morgan('combined'));
-app.use(generalLimiter);
-app.use(securityHeaders);
-app.use(apiKeyMiddleware);
 
 // ─── SSE Clients ────────────────────────────────────────────────
 const sseClients = new Set();
@@ -61,7 +52,7 @@ function broadcastSSE(event, data) {
     }
 }
 
-// ─── Health Check (no auth) ────────────────────────────────────
+// ─── Health Check (no auth, bypasses rate limit) ──────────────
 app.get('/api/health', (req, res) => {
     const db = getDb();
     const eventCount = db.prepare('SELECT COUNT(*) as count FROM events').get();
@@ -76,7 +67,7 @@ app.get('/api/health', (req, res) => {
     });
 });
 
-// ─── SSE Stream (no auth, read-only) ───────────────────────────
+// ─── SSE Stream (no auth, bypasses rate limit) ─────────────────
 app.get('/api/events/stream', (req, res) => {
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
@@ -93,6 +84,20 @@ app.get('/api/events/stream', (req, res) => {
         sseClients.delete(res);
     });
 });
+
+// ─── Auth Check (no auth, bypasses rate limit) ────────────────
+app.post('/api/auth/check', (req, res) => {
+    res.json({ valid: true, timestamp: new Date().toISOString() });
+});
+
+// ─── Middleware ─────────────────────────────────────────────────
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
+app.use(morgan('combined'));
+app.use(generalLimiter);
+app.use(securityHeaders);
+app.use(apiKeyMiddleware);
 
 // ─── Auth Routes ───────────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
@@ -152,11 +157,6 @@ function validateEnv() {
     }
     console.log('Environment validation complete');
 }
-
-// ─── Auth Check (health) ───────────────────────────────────────
-app.post('/api/auth/check', (req, res) => {
-    res.json({ valid: true });
-});
 
 // ─── Start Server ──────────────────────────────────────────────
 function start() {

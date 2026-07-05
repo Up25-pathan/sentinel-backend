@@ -82,7 +82,7 @@ class MainWindow(QMainWindow):
     def _start_notification_poller(self):
         self.notify_timer = QTimer(self)
         self.notify_timer.timeout.connect(self._check_new_alerts)
-        self.notify_timer.start(15000)
+        self.notify_timer.start(60000)
 
     def _check_new_alerts(self):
         if not self.api_client.is_authenticated():
