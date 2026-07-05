@@ -263,7 +263,12 @@ class MainWindow(QMainWindow):
         else:
             self.conn_label.setText(f"\u25CF {short}")
             self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
-            self.status_label.setText("LOCAL MODE — SERVER DISCONNECTED")
+            if "refused" in msg.lower() or "unreachable" in msg.lower() or "timed out" in msg.lower() or "connection" in msg.lower():
+                self.status_label.setText("SERVER OFFLINE — CHECK RENDER")
+                self.sse_label.setText("")
+            else:
+                self.status_label.setText(f"AUTH FAILED — {msg[:40]}")
+                self.sse_label.setText("CHECK SERVER LOGS")
 
     def _on_err(self, msg):
         from utils.api_client import SERVER_URL as SRV
@@ -308,7 +313,29 @@ class MainWindow(QMainWindow):
             print(f"SSE event error: {e}")
 
     def _auto_login(self):
-        QTimer.singleShot(500, lambda: self.api_client.login())
+        QTimer.singleShot(500, lambda: self._check_server())
+
+    def _check_server(self):
+        from utils.api_client import SERVER_URL as SRV
+        short = SRV.replace('https://','').replace('http://','')
+        from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+        from PyQt6.QtCore import QUrl
+        nam = QNetworkAccessManager(self)
+        url = QUrl(f"{SRV}/api/health")
+        req = QNetworkRequest(url)
+        reply = nam.get(req)
+        def on_health():
+            if reply.error() == QNetworkReply.NetworkError.NoError:
+                self.conn_label.setText(f"\u25CF {short}")
+                self.conn_label.setStyleSheet("color: #f59e0b; font-size: 8pt; letter-spacing: 1px;")
+                self.status_label.setText("SERVER ONLINE — AUTHENTICATING...")
+                self.api_client.login()
+            else:
+                self.conn_label.setText(f"\u26AA {short}")
+                self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
+                self.status_label.setText(f"SERVER UNREACHABLE — {reply.errorString()[:50]}")
+            reply.deleteLater()
+        reply.finished.connect(on_health)
 
     def closeEvent(self, event):
         self.tray.hide()

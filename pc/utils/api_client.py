@@ -34,9 +34,15 @@ class ApiClient(QObject):
         url = QUrl(f"{SERVER_URL}/api/auth/login")
         req = QNetworkRequest(url)
         req.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
+        api_key = os.getenv("SENTINEL_API_KEY")
+        if api_key:
+            req.setRawHeader(b"X-API-Key", api_key.encode())
         body = json.dumps({"username": username, "password": password}).encode()
         reply = self.nam.post(req, body)
         self._pending[id(reply)] = ("login", None)
+
+    def check_health(self):
+        self._get("/api/health", "health")
 
     def connect_sse(self):
         if self._sse_active:
