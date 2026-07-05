@@ -162,13 +162,14 @@ class GeopoliticalMapPanel(QWidget):
         layout.addWidget(self.web_view, 1)
 
     def _load_map(self):
-        token = self.api_client.token or ""
-
-        html = MAP_HTML_TEMPLATE.replace("%API_URL%", json.dumps(SERVER_URL))
-        html = html.replace("%TOKEN%", json.dumps(token))
-
-        self.web_view.setHtml(html, QUrl("http://localhost/"))
-        self.status_label.setText(f"SRV: {SERVER_URL}")
+        try:
+            token = self.api_client.token or ""
+            html = MAP_HTML_TEMPLATE.replace("%API_URL%", json.dumps(SERVER_URL))
+            html = html.replace("%TOKEN%", json.dumps(token))
+            self.web_view.setHtml(html, QUrl("http://localhost/"))
+            self.status_label.setText(f"SRV: {SERVER_URL}")
+        except Exception as e:
+            self.status_label.setText(f"MAP ERROR: {e}")
 
     def refresh(self):
         self._load_map()

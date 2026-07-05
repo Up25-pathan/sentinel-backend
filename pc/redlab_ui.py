@@ -29,19 +29,24 @@ from utils.api_client import ApiClient
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SENTINEL CIC — v2.0")
+        self.setWindowTitle("SENTINEL CIC — v2.1")
         self.setGeometry(80, 40, 1800, 960)
         self.setMinimumSize(1400, 800)
         self._load_stylesheet()
-        audit.log_action("GUI_START", "Sentinel CIC v2.0 Initialized")
+        audit.log_action("GUI_START", "Sentinel CIC v2.1 Initialized")
 
         self.api_client = ApiClient()
-        self._setup_tray()
-        self._setup_ui()
-        self._setup_monitor()
-        self._connect_signals()
-        self._auto_login()
-        self._start_notification_poller()
+        try:
+            self._setup_tray()
+            self._setup_ui()
+            self._setup_monitor()
+            self._connect_signals()
+            self._auto_login()
+            self._start_notification_poller()
+        except Exception as e:
+            print(f"Init error: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _load_stylesheet(self):
         try:
@@ -72,6 +77,7 @@ class MainWindow(QMainWindow):
         self.tray.show()
         self._notified_alert_ids = set()
         self._last_notify = 0
+        self._health_reply = None
 
     def _on_tray_activate(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -340,14 +346,13 @@ class MainWindow(QMainWindow):
     def _check_server(self):
         from utils.api_client import SERVER_URL as SRV
         short = SRV.replace('https://','').replace('http://','')
-        from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+        from PyQt6.QtNetwork import QNetworkRequest, QNetworkReply
         from PyQt6.QtCore import QUrl
-        nam = QNetworkAccessManager(self)
         url = QUrl(f"{SRV}/api/health")
         req = QNetworkRequest(url)
-        reply = nam.get(req)
+        self._health_reply = self.api_client.nam.get(req)
         def on_health():
-            if reply.error() == QNetworkReply.NetworkError.NoError:
+            if self._health_reply.error() == QNetworkReply.NetworkError.NoError:
                 self.conn_label.setText(f"\u25CF {short}")
                 self.conn_label.setStyleSheet("color: #f59e0b; font-size: 8pt; letter-spacing: 1px;")
                 self.status_label.setText("SERVER ONLINE — AUTHENTICATING...")
@@ -355,9 +360,10 @@ class MainWindow(QMainWindow):
             else:
                 self.conn_label.setText(f"\u26AA {short}")
                 self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
-                self.status_label.setText(f"SERVER UNREACHABLE — {reply.errorString()[:50]}")
-            reply.deleteLater()
-        reply.finished.connect(on_health)
+                self.status_label.setText(f"SERVER UNREACHABLE — {self._health_reply.errorString()[:50]}")
+            self._health_reply.deleteLater()
+            self._health_reply = None
+        self._health_reply.finished.connect(on_health)
 
     def closeEvent(self, event):
         self.tray.hide()
