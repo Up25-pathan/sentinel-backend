@@ -101,14 +101,14 @@ class MainWindow(QMainWindow):
                 return
             now_ids = set()
             for a in alerts:
-                aid = a.get("id", a.get("_id", hash(a.get("message", ""))))
+                aid = a.get("id", a.get("_id", hash(str(a.get("message", "")))))
                 now_ids.add(str(aid))
             new_ids = now_ids - self._notified_alert_ids
             if new_ids:
                 for alert in alerts:
-                    aid = str(alert.get("id", alert.get("_id", hash(alert.get("message", "")))))
+                    aid = str(alert.get("id", alert.get("_id", hash(str(alert.get("message", ""))))))
                     if aid in new_ids:
-                        msg = alert.get("message", alert.get("title", "New alert"))
+                        msg = alert.get("message", alert.get("title", "New alert")) or "New alert"
                         self.tray.showMessage(
                             "SENTINEL ALERT",
                             msg,
@@ -369,6 +369,15 @@ class MainWindow(QMainWindow):
         self.tray.hide()
         event.accept()
 
+
+def _global_excepthook(exc_type, exc_value, exc_tb):
+    import traceback
+    msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    print(f"CRASH: {msg}", flush=True)
+    with open("crash.log", "w") as f:
+        f.write(msg)
+
+sys.excepthook = _global_excepthook
 
 if __name__ == "__main__":
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)

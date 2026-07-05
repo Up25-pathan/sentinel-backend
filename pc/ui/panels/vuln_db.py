@@ -140,44 +140,58 @@ class VulnDBPanel(QWidget):
                 w.deleteLater()
 
     def _filter(self):
-        query = self.search_input.text().strip().lower()
-        severity = self.severity_filter.currentText()
-        filtered = []
-        for v in self._vulns:
-            if severity != "All" and v["severity"] != severity:
-                continue
-            if query:
-                searchable = f"{v['cve_id']} {v['software']} {v['description']} {v.get('affected_versions', '')}".lower()
-                if query not in searchable:
+        try:
+            query = self.search_input.text().strip().lower()
+            severity = self.severity_filter.currentText()
+            filtered = []
+            for v in self._vulns:
+                if severity != "All" and v.get("severity", "") != severity:
                     continue
-            filtered.append(v)
-        self._render_table(filtered)
+                if query:
+                    searchable = f"{v.get('cve_id', '')} {v.get('software', '')} {v.get('description', '')} {v.get('affected_versions', '')}".lower()
+                    if query not in searchable:
+                        continue
+                filtered.append(v)
+            self._render_table(filtered)
+        except Exception as e:
+            print(f"Vuln filter error: {e}")
+            self._render_table([])
 
     def _render_table(self, vulns):
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(vulns))
-        for row, v in enumerate(vulns):
-            cve_item = QTableWidgetItem(v["cve_id"])
-            cve_item.setData(Qt.ItemDataRole.UserRole, row)
+        try:
+            self.table.setRowCount(0)
+            self.table.setRowCount(len(vulns))
+            for row, v in enumerate(vulns):
+                cve_id = v.get("cve_id", v.get("id", "UNKNOWN"))
+                severity = v.get("severity", v.get("risk_level", "UNKNOWN"))
+                score = v.get("score", v.get("cvss", "—"))
+                software = v.get("software", v.get("affected_software", "—"))
+                status = v.get("status", v.get("exploit_status", "Unknown"))
+                date = v.get("date", v.get("published", v.get("created_at", "")))[:10]
 
-            sev_item = QTableWidgetItem(v["severity"])
-            sev_item.setForeground(QColor(SEVERITY_COLORS.get(v["severity"], "#64748b")))
+                cve_item = QTableWidgetItem(cve_id)
+                cve_item.setData(Qt.ItemDataRole.UserRole, row)
 
-            score_item = QTableWidgetItem(str(v["score"]))
+                sev_item = QTableWidgetItem(severity)
+                sev_item.setForeground(QColor(SEVERITY_COLORS.get(severity, "#64748b")))
 
-            sw_item = QTableWidgetItem(v["software"])
+                score_item = QTableWidgetItem(str(score))
 
-            status_item = QTableWidgetItem(v["status"])
-            if v["status"] == "Active":
-                status_item.setForeground(QColor("#ef4444"))
-            else:
-                status_item.setForeground(QColor("#22d3ee"))
+                sw_item = QTableWidgetItem(software)
 
-            date_item = QTableWidgetItem(v["date"])
+                status_item = QTableWidgetItem(status)
+                if status == "Active":
+                    status_item.setForeground(QColor("#ef4444"))
+                else:
+                    status_item.setForeground(QColor("#22d3ee"))
 
-            items = [cve_item, sev_item, score_item, sw_item, status_item, date_item]
-            for col, item in enumerate(items):
-                self.table.setItem(row, col, item)
+                date_item = QTableWidgetItem(date)
+
+                items = [cve_item, sev_item, score_item, sw_item, status_item, date_item]
+                for col, item in enumerate(items):
+                    self.table.setItem(row, col, item)
+        except Exception as e:
+            print(f"Vuln render error: {e}")
 
     def _on_select(self):
         rows = self.table.selectedItems()
@@ -261,20 +275,25 @@ class VulnDBPanel(QWidget):
         self._nam.get(req)
 
     def _on_network_reply(self, reply):
-        self.sync_btn.setEnabled(True)
-        self.sync_btn.setText("SYNC")
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            try:
-                data = json.loads(reply.readAll().data().decode())
-                if isinstance(data, list):
-                    self._vulns = data
-                else:
-                    self._vulns = data.get("vulns", data.get("results", []))
-            except (json.JSONDecodeError, UnicodeDecodeError):
+        try:
+            self.sync_btn.setEnabled(True)
+            self.sync_btn.setText("SYNC")
+            if reply.error() == QNetworkReply.NetworkError.NoError:
+                try:
+                    raw = reply.readAll().data()
+                    data = json.loads(raw.decode("utf-8", errors="replace"))
+                    if isinstance(data, list):
+                        self._vulns = data
+                    else:
+                        self._vulns = data.get("vulns", data.get("results", []))
+                except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+                    self._load_mock()
+            else:
                 self._load_mock()
-        else:
+            self._filter()
+        except Exception as e:
+            print(f"VulnDB reply error: {e}")
             self._load_mock()
-        self._filter()
         reply.deleteLater()
 
     def _load_mock(self):

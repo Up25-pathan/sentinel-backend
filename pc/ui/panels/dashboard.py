@@ -160,18 +160,21 @@ class DashboardPanel(QWidget):
     def _maybe_fetch_chart_data(self):
         if not HAS_MPL:
             return
-        self._nam.finished.connect(self._on_chart_reply)
         url = QUrl(f"{SERVER_URL}/api/intelligence/trends?days=14")
         req = QNetworkRequest(url)
         if self.api_client.token:
             req.setRawHeader(b"Authorization", f"Bearer {self.api_client.token}".encode())
-        self._nam.get(req)
+        reply = self._nam.get(req)
+        reply.finished.connect(lambda r=reply: self._on_chart_reply(r))
 
     def _on_chart_reply(self, reply):
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            data = json.loads(reply.readAll().data().decode())
-            trends = data.get("trends", [])
-            self._update_trend_chart(trends)
+        try:
+            if reply.error() == QNetworkReply.NetworkError.NoError:
+                data = json.loads(reply.readAll().data().decode())
+                trends = data.get("trends", [])
+                self._update_trend_chart(trends)
+        except Exception as e:
+            print(f"Chart data error: {e}")
         reply.deleteLater()
 
     def _update_trend_chart(self, trends):
@@ -212,10 +215,13 @@ class DashboardPanel(QWidget):
         reply.finished.connect(lambda r=reply: self._on_cat_data(r))
 
     def _on_cat_data(self, reply):
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            data = json.loads(reply.readAll().data().decode())
-            cat_dist = data.get("category_distribution", [])
-            self._update_cat_chart(cat_dist)
+        try:
+            if reply.error() == QNetworkReply.NetworkError.NoError:
+                data = json.loads(reply.readAll().data().decode())
+                cat_dist = data.get("category_distribution", [])
+                self._update_cat_chart(cat_dist)
+        except Exception as e:
+            print(f"Category chart error: {e}")
         reply.deleteLater()
 
     def _update_cat_chart(self, cat_dist):

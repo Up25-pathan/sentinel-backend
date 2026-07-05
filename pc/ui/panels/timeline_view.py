@@ -164,12 +164,18 @@ class TimelinePanel(QWidget):
         self._merge_and_render()
 
     def _on_dashboard(self, data):
-        self._dashboard_data = data
-        self._merge_and_render()
+        try:
+            self._dashboard_data = data if isinstance(data, dict) else {}
+            self._merge_and_render()
+        except Exception as e:
+            print(f"Timeline dashboard error: {e}")
 
     def _on_alerts(self, alerts):
-        self._alerts_data = alerts if isinstance(alerts, list) else []
-        self._merge_and_render()
+        try:
+            self._alerts_data = alerts if isinstance(alerts, list) else []
+            self._merge_and_render()
+        except Exception as e:
+            print(f"Timeline alerts error: {e}")
 
     def _merge_and_render(self):
         self._all_entries = []
@@ -179,50 +185,65 @@ class TimelinePanel(QWidget):
         if not recent_events and "events" in self._dashboard_data:
             recent_events = self._dashboard_data["events"]
 
-        for evt in recent_events:
-            self._all_entries.append({
-                "type": "events",
-                "timestamp": evt.get("created_at", evt.get("timestamp", ""))[:19],
-                "title": evt.get("title", evt.get("name", "Unknown event")),
-                "details": evt,
-            })
+        for evt in (recent_events or []):
+            try:
+                self._all_entries.append({
+                    "type": "events",
+                    "timestamp": (evt.get("created_at", evt.get("timestamp", "")) or "")[:19],
+                    "title": evt.get("title", evt.get("name", "Unknown event")) or "Unknown event",
+                    "details": evt,
+                })
+            except Exception:
+                pass
 
-        for alert in self._alerts_data:
-            self._all_entries.append({
-                "type": "alerts",
-                "timestamp": alert.get("created_at", "")[:19],
-                "title": alert.get("message", "Unknown alert"),
-                "details": alert,
-            })
+        for alert in (self._alerts_data or []):
+            try:
+                self._all_entries.append({
+                    "type": "alerts",
+                    "timestamp": (alert.get("created_at", "") or "")[:19],
+                    "title": alert.get("message", "Unknown alert") or "Unknown alert",
+                    "details": alert,
+                })
+            except Exception:
+                pass
 
-        for log in self._audit_logs:
-            ts, action, details = log if len(log) == 3 else (log[0] if len(log) > 0 else "", log[1] if len(log) > 1 else "unknown", "")
-            self._all_entries.append({
-                "type": "jobs",
-                "timestamp": str(ts)[:19],
-                "title": action,
-                "details": details,
-            })
+        for log in (self._audit_logs or []):
+            try:
+                ts, action, details = log if len(log) == 3 else (log[0] if len(log) > 0 else "", log[1] if len(log) > 1 else "unknown", "")
+                self._all_entries.append({
+                    "type": "jobs",
+                    "timestamp": str(ts)[:19],
+                    "title": action or "unknown",
+                    "details": details,
+                })
+            except Exception:
+                pass
 
         campaign_phases = self._dashboard_data.get("campaign_phases", []) if self._dashboard_data else []
         if not campaign_phases and "phases" in self._dashboard_data:
             campaign_phases = self._dashboard_data["phases"]
-        for phase in campaign_phases:
-            self._all_entries.append({
-                "type": "phases",
-                "timestamp": phase.get("updated_at", phase.get("created_at", ""))[:19],
-                "title": phase.get("phase_name", phase.get("name", "Campaign phase")),
-                "details": phase,
-            })
+        for phase in (campaign_phases or []):
+            try:
+                self._all_entries.append({
+                    "type": "phases",
+                    "timestamp": (phase.get("updated_at", phase.get("created_at", "")) or "")[:19],
+                    "title": phase.get("phase_name", phase.get("name", "Campaign phase")) or "Campaign phase",
+                    "details": phase,
+                })
+            except Exception:
+                pass
 
         intel_items = self._dashboard_data.get("intel_summary", []) if self._dashboard_data else []
-        for item in intel_items:
-            self._all_entries.append({
-                "type": "intel",
-                "timestamp": item.get("date", item.get("timestamp", ""))[:19],
-                "title": item.get("title", item.get("summary", "Intel item")),
-                "details": item,
-            })
+        for item in (intel_items or []):
+            try:
+                self._all_entries.append({
+                    "type": "intel",
+                    "timestamp": (item.get("date", item.get("timestamp", "")) or "")[:19],
+                    "title": item.get("title", item.get("summary", "Intel item")) or "Intel item",
+                    "details": item,
+                })
+            except Exception:
+                pass
 
         def _sort_key(e):
             return e.get("timestamp", "")

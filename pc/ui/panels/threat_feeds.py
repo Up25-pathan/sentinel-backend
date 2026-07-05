@@ -177,18 +177,24 @@ class ThreatFeedsPanel(QWidget):
         self._nam.get(req)
 
     def _on_osint(self, data):
-        articles = data.get("data", [])
-        if articles:
-            self._articles = articles
-            self._populate_cards()
+        try:
+            articles = data.get("data", []) if isinstance(data, dict) else []
+            if articles:
+                self._articles = articles
+                self._populate_cards()
+        except Exception as e:
+            print(f"Threat feeds OSINT error: {e}")
 
     def _on_feeds_reply(self, reply):
-        if reply.error() == QNetworkReply.NetworkError.NoError:
-            data = json.loads(reply.readAll().data().decode())
-            feeds = data if isinstance(data, list) else data.get("feeds", [])
-            if feeds:
-                self._articles = feeds
-                self._populate_cards()
+        try:
+            if reply.error() == QNetworkReply.NetworkError.NoError:
+                data = json.loads(reply.readAll().data().decode())
+                feeds = data if isinstance(data, list) else data.get("feeds", [])
+                if feeds:
+                    self._articles = feeds
+                    self._populate_cards()
+        except Exception as e:
+            print(f"Threat feeds reply error: {e}")
         reply.deleteLater()
 
     def _populate_cards(self):
