@@ -14,14 +14,16 @@ const rssParser = new RSSParser();
 const RSS_FEEDS = [
     { name: 'NYT World', url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml' },
     { name: 'The Guardian', url: 'https://www.theguardian.com/world/rss' },
-    { name: 'BBC World', url: 'http://feeds.bbci.co.uk/news/world/rss.xml' },
+    { name: 'BBC World', url: 'https://feeds.bbci.co.uk/news/world/rss.xml' },
     { name: 'Al Jazeera', url: 'https://www.aljazeera.com/xml/rss/all.xml' },
     { name: 'France 24', url: 'https://www.france24.com/en/rss' },
-    { name: 'Reuters World', url: 'https://www.reutersagency.com/feed/?taxonomy=best-sectors&post_type=best' },
-    { name: 'AP News', url: 'https://rsshub.app/apnews/topics/world-news' },
+    { name: 'NPR World', url: 'https://feeds.npr.org/1004/rss.xml' },
+    { name: 'CBS News', url: 'https://www.cbsnews.com/latest/rss/world' },
+    { name: 'ABC News', url: 'https://abcnews.go.com/abcnews/internationalheadlines' },
     { name: 'DW News', url: 'https://rss.dw.com/rdf/rss-en-world' },
-    { name: 'TASS', url: 'https://tass.com/rss/v2.xml' },
     { name: 'Defense One', url: 'https://www.defenseone.com/rss/' },
+    { name: 'CSIS', url: 'https://www.csis.org/rss/analysis' },
+    { name: 'Foreign Policy', url: 'https://foreignpolicy.com/feed/' },
 ];
 
 // Geopolitical keywords for filtering
@@ -59,7 +61,7 @@ async function ingestFromRSS() {
 
     for (const feed of RSS_FEEDS) {
         try {
-            const parsed = await rssParser.parseURL(feed.url);
+            const parsed = await rssParser.parseURL(feed.url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SentinelBot/1.0)' } });
             const articles = parsed.items || [];
 
             for (const article of articles) {
