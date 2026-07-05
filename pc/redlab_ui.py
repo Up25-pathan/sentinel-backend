@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QLabel, QProgressBar, QSystemTrayIcon, QMenu
 )
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from PyQt6.QtCore import QUrl
 import time
 from PyQt6.QtGui import QIcon
 from ui.sidebar import Sidebar
@@ -77,6 +79,7 @@ class MainWindow(QMainWindow):
         self.tray.show()
         self._notified_alert_ids = set()
         self._last_notify = 0
+        self._health_nam = QNetworkAccessManager(self)
         self._health_reply = None
 
     def _on_tray_activate(self, reason):
@@ -346,23 +349,27 @@ class MainWindow(QMainWindow):
     def _check_server(self):
         from utils.api_client import SERVER_URL as SRV
         short = SRV.replace('https://','').replace('http://','')
-        from PyQt6.QtNetwork import QNetworkRequest, QNetworkReply
-        from PyQt6.QtCore import QUrl
         url = QUrl(f"{SRV}/api/health")
         req = QNetworkRequest(url)
-        self._health_reply = self.api_client.nam.get(req)
+        self._health_reply = self._health_nam.get(req)
         def on_health():
-            if self._health_reply.error() == QNetworkReply.NetworkError.NoError:
-                self.conn_label.setText(f"\u25CF {short}")
-                self.conn_label.setStyleSheet("color: #f59e0b; font-size: 8pt; letter-spacing: 1px;")
-                self.status_label.setText("SERVER ONLINE — AUTHENTICATING...")
-                self.api_client.login()
-            else:
-                self.conn_label.setText(f"\u26AA {short}")
-                self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
-                self.status_label.setText(f"SERVER UNREACHABLE — {self._health_reply.errorString()[:50]}")
-            self._health_reply.deleteLater()
-            self._health_reply = None
+            try:
+                if self._health_reply and self._health_reply.error() == QNetworkReply.NetworkError.NoError:
+                    self.conn_label.setText(f"\u25CF {short}")
+                    self.conn_label.setStyleSheet("color: #f59e0b; font-size: 8pt; letter-spacing: 1px;")
+                    self.status_label.setText("SERVER ONLINE — AUTHENTICATING...")
+                    self.api_client.login()
+                else:
+                    err = self._health_reply.errorString() if self._health_reply else "No reply"
+                    self.conn_label.setText(f"\u26AA {short}")
+                    self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
+                    self.status_label.setText(f"SERVER UNREACHABLE — {err[:50]}")
+            except Exception as e:
+                print(f"Health check error: {e}")
+            finally:
+                if self._health_reply:
+                    self._health_reply.deleteLater()
+                    self._health_reply = None
         self._health_reply.finished.connect(on_health)
 
     def closeEvent(self, event):
