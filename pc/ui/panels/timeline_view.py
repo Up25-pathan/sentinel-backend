@@ -144,7 +144,7 @@ class TimelinePanel(QWidget):
             QListWidget::item:selected {
                 background: transparent;
             }
-        `")
+        """)
         self.list_widget.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.list_widget.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self.list_widget, 1)

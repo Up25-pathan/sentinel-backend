@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget, QLabel, QProgressBar, QSystemTrayIcon, QMenu
 )
 from PyQt6.QtCore import Qt, QTimer
+import time
 from PyQt6.QtGui import QIcon
 from ui.sidebar import Sidebar
 from ui.panels.dashboard import DashboardPanel
@@ -69,7 +70,8 @@ class MainWindow(QMainWindow):
             icon = QIcon(p)
         self.tray.setIcon(icon)
         self.tray.show()
-        self._last_alert_count = 0
+        self._notified_alert_ids = set()
+        self._last_notify = 0
 
     def _on_tray_activate(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -91,20 +93,24 @@ class MainWindow(QMainWindow):
         try:
             if not isinstance(alerts, list):
                 return
-            count = len(alerts)
-            if count > self._last_alert_count:
-                diff = count - self._last_alert_count
-                recent = alerts[:diff]
-                for alert in recent:
-                    msg = alert.get("message", alert.get("title", "New alert"))
-                    self.tray.showMessage(
-                        "SENTINEL ALERT",
-                        msg,
-                        QSystemTrayIcon.MessageIcon.Warning,
-                        5000
-                    )
-                    audit.log_action("NOTIFICATION", msg)
-            self._last_alert_count = count
+            now_ids = set()
+            for a in alerts:
+                aid = a.get("id", a.get("_id", hash(a.get("message", ""))))
+                now_ids.add(str(aid))
+            new_ids = now_ids - self._notified_alert_ids
+            if new_ids:
+                for alert in alerts:
+                    aid = str(alert.get("id", alert.get("_id", hash(alert.get("message", "")))))
+                    if aid in new_ids:
+                        msg = alert.get("message", alert.get("title", "New alert"))
+                        self.tray.showMessage(
+                            "SENTINEL ALERT",
+                            msg,
+                            QSystemTrayIcon.MessageIcon.Warning,
+                            5000
+                        )
+                        audit.log_action("NOTIFICATION", msg)
+                self._notified_alert_ids = now_ids
         except Exception as e:
             print(f"Notification error: {e}")
 
@@ -300,7 +306,12 @@ class MainWindow(QMainWindow):
             if event_type == "connected":
                 self.sse_label.setText("SSE: \u25CF LIVE")
                 self.sse_label.setStyleSheet("color: #22d3ee; font-size: 7pt;")
-            elif event_type == "new_event":
+                return
+            now = time.time()
+            if now - self._last_notify < 3:
+                return
+            self._last_notify = now
+            if event_type == "new_event":
                 title = data.get("title", "Unknown event")
                 risk = data.get("risk_level", "")
                 if risk in ("CRITICAL", "HIGH") or data.get("is_breaking"):
