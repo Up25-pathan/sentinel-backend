@@ -35,13 +35,16 @@ router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        if (!username || !password) {
+        if (typeof username !== 'string' || typeof password !== 'string' || !username.trim() || !password.trim()) {
             return res.status(400).json({ error: 'Username and password required' });
         }
 
+        const sanitizedUsername = username.trim();
+        const sanitizedPassword = password.trim();
+
         const validUsername = process.env.AUTH_USERNAME || 'admin';
 
-        if (username !== validUsername) {
+        if (sanitizedUsername !== validUsername) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
@@ -63,14 +66,14 @@ router.post('/login', async (req, res) => {
         if (isValid) {
             const secret = process.env.JWT_SECRET || 'default-dev-secret-change-in-production';
             const token = jwt.sign(
-                { username, role: 'admin' },
+                { username: sanitizedUsername, role: 'admin' },
                 secret,
                 { expiresIn: '30d' }
             );
 
             return res.json({
                 token,
-                user: { username, role: 'admin' },
+                user: { username: sanitizedUsername, role: 'admin' },
                 expiresIn: '30d'
             });
         }
