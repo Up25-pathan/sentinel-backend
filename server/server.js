@@ -85,6 +85,40 @@ app.get('/api/events/stream', (req, res) => {
     });
 });
 
+// ─── Aviation Data (no auth, proxies OpenSky) ──────────────────
+let aviationCache = { data: null, time: 0 };
+const OPENSKY_URL = 'https://opensky-network.org/api/states/all';
+
+app.get('/api/map/aviation', async (req, res) => {
+    const CACHE_TTL = 30000;
+    if (Date.now() - aviationCache.time < CACHE_TTL && aviationCache.data) {
+        return res.json(aviationCache.data);
+    }
+    try {
+        const resp = await fetch(OPENSKY_URL, { signal: AbortSignal.timeout(10000) });
+        const raw = await resp.json();
+        const states = (raw.states || []).filter(s => s[5] && s[6]).map(s => ({
+            icao24: s[0],
+            callsign: (s[1] || '').trim(),
+            origin_country: s[2],
+            lat: s[6],
+            lng: s[5],
+            altitude: s[7],
+            velocity: s[9],
+            heading: s[10],
+        }));
+        const result = { aircraft: states, count: states.length, timestamp: new Date().toISOString() };
+        aviationCache = { data: result, time: Date.now() };
+        res.json(result);
+    } catch (err) {
+        if (aviationCache.data) {
+            res.json({ ...aviationCache.data, stale: true });
+        } else {
+            res.json({ aircraft: [], count: 0, error: err.message });
+        }
+    }
+});
+
 // ─── Auth Check (no auth, bypasses rate limit) ────────────────
 app.post('/api/auth/check', (req, res) => {
     res.json({ valid: true, timestamp: new Date().toISOString() });

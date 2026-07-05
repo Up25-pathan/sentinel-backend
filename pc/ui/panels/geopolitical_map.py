@@ -131,66 +131,59 @@ function loadMarkers() {
     .catch(function(err) { console.error('Intel markers error:', err); });
 }
 
-// ─── Aviation: Flight Routes ──────────────────────────────────
-const FLIGHT_ROUTES = [
-  { from: [40.6413, -73.7781], to: [51.4700, -0.4543], code: 'JFK-LHR' },
-  { from: [33.9416, -118.4085], to: [35.6762, 139.6503], code: 'LAX-NRT' },
-  { from: [25.2532, 55.3657], to: [51.4700, -0.4543], code: 'DXB-LHR' },
-  { from: [1.3592, 103.9894], to: [49.0097, 2.5479], code: 'SIN-CDG' },
-  { from: [40.6413, -73.7781], to: [48.8566, 2.3522], code: 'JFK-CDG' },
-  { from: [25.2532, 55.3657], to: [1.3592, 103.9894], code: 'DXB-SIN' },
-  { from: [35.6762, 139.6503], to: [49.0097, 2.5479], code: 'NRT-CDG' },
-  { from: [51.4700, -0.4543], to: [55.7558, 37.6173], code: 'LHR-SVO' },
-  { from: [1.3592, 103.9894], to: [33.9416, -118.4085], code: 'SIN-LAX' },
-  { from: [40.6413, -73.7781], to: [25.2532, 55.3657], code: 'JFK-DXB' },
-  { from: [55.7558, 37.6173], to: [39.9042, 116.4074], code: 'SVO-PEK' },
-  { from: [40.6413, -73.7781], to: [19.4361, -99.0719], code: 'JFK-MEX' },
-];
+// ─── Aviation: Real Aircraft (OpenSky via proxy) ──────────────
+let aircraftMarkers = {};
+let aircraftTimer = null;
 
-let flightDots = [];
-
-function gcInterpolate(p1, p2, frac) {
-  const lat1 = p1[0] * Math.PI / 180, lon1 = p1[1] * Math.PI / 180;
-  const lat2 = p2[0] * Math.PI / 180, lon2 = p2[1] * Math.PI / 180;
-  const d = 2 * Math.asin(Math.sqrt(Math.pow(Math.sin((lat1-lat2)/2),2) + Math.cos(lat1)*Math.cos(lat2)*Math.pow(Math.sin((lon1-lon2)/2),2)));
-  const a = Math.sin((1-frac)*d) / Math.sin(d);
-  const b = Math.sin(frac*d) / Math.sin(d);
-  const x = a*Math.cos(lat1)*Math.cos(lon1) + b*Math.cos(lat2)*Math.cos(lon2);
-  const y = a*Math.cos(lat1)*Math.sin(lon1) + b*Math.cos(lat2)*Math.sin(lon2);
-  const z = a*Math.sin(lat1) + b*Math.sin(lat2);
-  return [Math.atan2(z, Math.sqrt(x*x+y*y)) * 180 / Math.PI, Math.atan2(y, x) * 180 / Math.PI];
+function loadAircraft() {
+  fetch(API_URL + '/api/map/aviation')
+    .then(r => r.json())
+    .then(data => {
+      const now = Date.now();
+      const seen = new Set();
+      (data.aircraft || []).forEach(function(a) {
+        if (!a.lat || !a.lng) return;
+        const key = a.icao24 || (a.lat + ',' + a.lng);
+        seen.add(key);
+        if (aircraftMarkers[key]) {
+          aircraftMarkers[key].setLatLng([a.lat, a.lng]);
+          aircraftMarkers[key]._lastSeen = now;
+        } else {
+          const heading = a.heading || 0;
+          const icon = L.divIcon({
+            className: '',
+            html: '<span style="color:#22d3ee;font-size:7px;text-shadow:0 0 4px rgba(34,211,238,0.8);transform:rotate(' + heading + 'deg);display:inline-block">&#9650;</span>',
+            iconSize: [8, 8], iconAnchor: [4, 4]
+          });
+          const marker = L.marker([a.lat, a.lng], { icon: icon });
+          const alt = a.altitude ? Math.round(a.altitude * 3.281) + 'ft' : 'N/A';
+          const spd = a.velocity ? Math.round(a.velocity * 1.944) + 'kn' : 'N/A';
+          marker.bindPopup(
+            '<div class="popup-custom">'
+            + '<h3>' + (a.callsign || 'Unknown') + '</h3>'
+            + '<div class="loc">' + a.origin_country + '</div>'
+            + '<div class="summ">Alt: ' + alt + ' | Speed: ' + spd + '</div>'
+            + '</div>'
+          );
+          marker._lastSeen = now;
+          marker.addTo(aviationLayer);
+          aircraftMarkers[key] = marker;
+        }
+      });
+      // Remove stale aircraft (no update in 120s)
+      Object.keys(aircraftMarkers).forEach(function(key) {
+        if (now - aircraftMarkers[key]._lastSeen > 120000) {
+          aviationLayer.removeLayer(aircraftMarkers[key]);
+          delete aircraftMarkers[key];
+        }
+      });
+    })
+    .catch(function(err) { console.error('Aircraft load error:', err); });
 }
 
-function buildFlightRoutes() {
-  FLIGHT_ROUTES.forEach(function(route) {
-    const points = [];
-    const steps = 40;
-    for (let i = 0; i <= steps; i++) {
-      points.push(gcInterpolate(route.from, route.to, i / steps));
-    }
-    L.polyline(points, {
-      className: 'flight-path',
-      weight: 1,
-      opacity: 0.25,
-      dashArray: '4 4',
-    }).bindPopup('<div class="popup-custom"><h3>' + route.code + '</h3><div class="loc">' + route.from.join(',') + ' &rarr; ' + route.to.join(',') + '</div></div>').addTo(aviationLayer);
-
-    const dot = L.circleMarker(route.from, {
-      radius: 3, color: '#22d3ee', fillColor: '#22d3ee', fillOpacity: 0.9,
-      className: 'flight-dot'
-    }).addTo(aviationLayer);
-    flightDots.push({ dot: dot, route: route, progress: Math.random(), speed: 0.002 + Math.random() * 0.006 });
-  });
-}
-
-function animateFlights() {
-  flightDots.forEach(function(fd) {
-    fd.progress += fd.speed;
-    if (fd.progress > 1) fd.progress = 0;
-    const pos = gcInterpolate(fd.route.from, fd.route.to, fd.progress);
-    fd.dot.setLatLng(pos);
-  });
-  requestAnimationFrame(animateFlights);
+function startAircraftUpdates() {
+  loadAircraft();
+  aircraftTimer = setInterval(loadAircraft, 30000);
 }
 
 // ─── Conflict Zones ─────────────────────────────────────────────
@@ -236,10 +229,9 @@ legend.addTo(map);
 
 // ─── Init ──────────────────────────────────────────────────────
 loadMarkers();
-buildFlightRoutes();
 buildConflictZones();
+startAircraftUpdates();
 setInterval(loadMarkers, 30000);
-animateFlights();
 </script>
 </body>
 </html>"""
