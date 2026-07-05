@@ -12,6 +12,8 @@ from ui.panels.osint_feed import OSINTFeedPanel
 from ui.panels.darkweb import DarkWebPanel
 from ui.panels.alerts import AlertsPanel
 from ui.panels.geopolitical_map import GeopoliticalMapPanel
+from ui.panels.ai_chat import AIChatPanel
+from ui.panels.reports import ReportsPanel
 from ui.panels.redops import RedOpsPanel
 from ui.panels.campaigns import CampaignsPanel
 from ui.panels.audit_log import AuditLogPanel
@@ -197,11 +199,13 @@ class MainWindow(QMainWindow):
             l = QVBoxLayout(w)
             l.addWidget(QLabel(f"Map panel unavailable: {e}"))
             self.panels["map"] = w
+        self.panels["chat"] = AIChatPanel(self.api_client)
+        self.panels["export"] = ReportsPanel(self.api_client)
         self.panels["redops"] = RedOpsPanel()
         self.panels["campaign"] = CampaignsPanel()
         self.panels["audit"] = AuditLogPanel()
 
-        self.panel_keys = ["dashboard", "intel", "osint", "darkweb", "alerts", "map", "redops", "campaign", "audit"]
+        self.panel_keys = ["dashboard", "intel", "osint", "darkweb", "alerts", "map", "chat", "export", "redops", "campaign", "audit"]
         for key in self.panel_keys:
             self.content.addWidget(self.panels[key])
 

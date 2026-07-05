@@ -8,6 +8,8 @@ NAV_ITEMS = [
     ("darkweb",   "DWEB"),
     ("alerts",    "ALRT"),
     ("map",       "MAP"),
+    ("chat",      "CHAT"),
+    ("export",    "RPRT"),
     ("redops",    "OPS"),
     ("campaign",  "CAMP"),
     ("audit",     "AUDT"),
@@ -34,7 +36,7 @@ class Sidebar(QWidget):
         for key, label in NAV_ITEMS:
             btn = QPushButton(label)
             btn.setCheckable(True)
-            btn.setFixedHeight(44)
+            btn.setFixedHeight(40)
             btn.clicked.connect(lambda checked, k=key: self._on_nav(k))
             layout.addWidget(btn)
             self.buttons[key] = btn

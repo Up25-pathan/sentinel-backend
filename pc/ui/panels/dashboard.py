@@ -3,15 +3,26 @@ from PyQt6.QtWidgets import (
     QHeaderView, QSplitter, QFrame
 )
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
+from PyQt6.QtCore import QUrl
 from ..stat_card import StatCard
+from utils.api_client import SERVER_URL
+import json
 
 RISK_COLORS = {
-    "CRITICAL": "#ef4444",
-    "HIGH": "#f59e0b",
-    "MEDIUM": "#22d3ee",
-    "LOW": "#475569",
+    "CRITICAL": "#ef4444", "HIGH": "#f59e0b",
+    "MEDIUM": "#22d3ee", "LOW": "#475569",
 }
+
+try:
+    import matplotlib
+    matplotlib.use('QtAgg')
+    from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+    from matplotlib.figure import Figure
+    HAS_MPL = True
+except:
+    HAS_MPL = False
 
 class HUDWidget(QFrame):
     def __init__(self, title):
@@ -27,12 +38,20 @@ class HUDWidget(QFrame):
         self.content.setContentsMargins(4, 4, 4, 4)
         layout.addLayout(self.content)
 
+class MplCanvas(FigureCanvasQTAgg):
+    def __init__(self, figsize=(5, 2.5), dpi=80):
+        self.fig = Figure(figsize=figsize, dpi=dpi)
+        self.fig.patch.set_facecolor('#0a0c12')
+        super().__init__(self.fig)
+
 class DashboardPanel(QWidget):
     def __init__(self, api_client):
         super().__init__()
         self.api_client = api_client
+        self._nam = QNetworkAccessManager(self)
         self._setup_ui()
         self._connect_signals()
+        self._maybe_fetch_chart_data()
         self._refresh()
 
     def _setup_ui(self):
@@ -105,6 +124,21 @@ class DashboardPanel(QWidget):
         mid.setSizes([600, 400])
         layout.addWidget(mid, 1)
 
+        # ── Charts row ──
+        if HAS_MPL:
+            charts = QHBoxLayout()
+            charts.setSpacing(6)
+            self.trend_canvas = MplCanvas(figsize=(5, 2))
+            self.cat_canvas = MplCanvas(figsize=(3.5, 2))
+            charts.addWidget(self.trend_canvas, 2)
+            charts.addWidget(self.cat_canvas, 1)
+            layout.addLayout(charts)
+        else:
+            no_mpl = QLabel("Install matplotlib for trend charts: pip install matplotlib")
+            no_mpl.setStyleSheet("color:#475569; font-size:7pt; padding:4px;")
+            layout.addWidget(no_mpl)
+
+        # ── Audit log ──
         bottom_frame = HUDWidget("AUDIT LOG")
         self.audit_table = QTableWidget()
         self.audit_table.setColumnCount(3)
@@ -123,6 +157,102 @@ class DashboardPanel(QWidget):
         self.api_client.osintDataReady.connect(self._on_osint)
         self.api_client.darkwebDataReady.connect(self._on_darkweb)
 
+    def _maybe_fetch_chart_data(self):
+        if not HAS_MPL:
+            return
+        self._nam.finished.connect(self._on_chart_reply)
+        url = QUrl(f"{SERVER_URL}/api/intelligence/trends?days=14")
+        req = QNetworkRequest(url)
+        if self.api_client.token:
+            req.setRawHeader(b"Authorization", f"Bearer {self.api_client.token}".encode())
+        self._nam.get(req)
+
+    def _on_chart_reply(self, reply):
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            data = json.loads(reply.readAll().data().decode())
+            trends = data.get("trends", [])
+            self._update_trend_chart(trends)
+        reply.deleteLater()
+
+    def _update_trend_chart(self, trends):
+        if not HAS_MPL or not trends:
+            return
+        dates = [t.get("date", "")[-5:] for t in trends]
+        criticals = [t.get("critical", 0) for t in trends]
+        highs = [t.get("high", 0) for t in trends]
+        mediums = [t.get("medium", 0) for t in trends]
+
+        self.trend_canvas.fig.clear()
+        ax = self.trend_canvas.fig.add_subplot(111)
+        ax.set_facecolor('#0a0c12')
+        ax.spines['bottom'].set_color('#1e293b')
+        ax.spines['top'].set_color('#1e293b')
+        ax.spines['left'].set_color('#1e293b')
+        ax.spines['right'].set_color('#1e293b')
+        ax.tick_params(colors='#475569', labelsize=7)
+        ax.set_ylabel('Events', color='#475569', fontsize=7)
+
+        ax.fill_between(range(len(dates)), 0, criticals, color='#ef4444', alpha=0.6, label='Critical')
+        ax.fill_between(range(len(dates)), criticals, [c + h for c, h in zip(criticals, highs)], color='#f59e0b', alpha=0.6, label='High')
+        ax.fill_between(range(len(dates)), [c + h for c, h in zip(criticals, highs)], [c + h + m for c, h, m in zip(criticals, highs, mediums)], color='#22d3ee', alpha=0.4, label='Medium')
+        ax.set_xticks(range(len(dates)))
+        ax.set_xticklabels(dates, rotation=45, ha='right', fontsize=6)
+        ax.legend(loc='upper left', fontsize=6, facecolor='#0a0c12', edgecolor='#1e293b', labelcolor='#94a3b8')
+        self.trend_canvas.fig.tight_layout()
+        self.trend_canvas.draw()
+
+        self._fetch_category_data()
+
+    def _fetch_category_data(self):
+        url = QUrl(f"{SERVER_URL}/api/intelligence/dashboard")
+        req = QNetworkRequest(url)
+        if self.api_client.token:
+            req.setRawHeader(b"Authorization", f"Bearer {self.api_client.token}".encode())
+        reply = self._nam.get(req)
+        reply.finished.connect(lambda r=reply: self._on_cat_data(r))
+
+    def _on_cat_data(self, reply):
+        if reply.error() == QNetworkReply.NetworkError.NoError:
+            data = json.loads(reply.readAll().data().decode())
+            cat_dist = data.get("category_distribution", [])
+            self._update_cat_chart(cat_dist)
+        reply.deleteLater()
+
+    def _update_cat_chart(self, cat_dist):
+        if not HAS_MPL or not cat_dist:
+            return
+
+        cat_colors = {
+            "WAR": "#ef4444", "MILITARY_MOVEMENT": "#f59e0b",
+            "SANCTIONS": "#a78bfa", "COUP": "#ef4444",
+            "DIPLOMATIC_ESCALATION": "#f59e0b", "NUCLEAR_THREAT": "#ef4444",
+            "POLITICAL_INSTABILITY": "#f59e0b", "TERRORISM": "#ef4444",
+            "CYBER_ATTACK": "#22d3ee", "HUMANITARIAN": "#22d3ee",
+        }
+
+        cats = [c.get("category", "") for c in cat_dist[:8]]
+        counts = [c.get("count", 0) for c in cat_dist[:8]]
+        colors = [cat_colors.get(c, "#475569") for c in cats]
+
+        self.cat_canvas.fig.clear()
+        ax = self.cat_canvas.fig.add_subplot(111)
+        ax.set_facecolor('#0a0c12')
+        ax.spines['bottom'].set_color('#1e293b')
+        ax.spines['top'].set_color('#1e293b')
+        ax.spines['left'].set_color('#1e293b')
+        ax.spines['right'].set_color('#1e293b')
+        ax.tick_params(colors='#475569', labelsize=6)
+        ax.set_xlabel('Category', color='#475569', fontsize=7)
+
+        bars = ax.barh(range(len(cats)), counts, color=colors, height=0.6)
+        ax.set_yticks(range(len(cats)))
+        ax.set_yticklabels(cats, fontsize=7, color='#94a3b8')
+        for bar, count in zip(bars, counts):
+            ax.text(bar.get_width() + 0.2, bar.get_y() + bar.get_height() / 2,
+                    str(count), va='center', fontsize=7, color='#64748b')
+        self.cat_canvas.fig.tight_layout()
+        self.cat_canvas.draw()
+
     def _refresh(self):
         self.api_client.fetch_dashboard()
         self.api_client.fetch_breaking_events()
@@ -130,6 +260,7 @@ class DashboardPanel(QWidget):
         self.api_client.fetch_darkweb(limit=10)
         from utils import audit
         self._update_audit(audit.get_latest_logs(15))
+        self._maybe_fetch_chart_data()
 
     def _on_dashboard(self, data):
         ov = data.get("overview", {})
