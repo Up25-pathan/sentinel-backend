@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════
-   SENTINEL CIC — Tactical Military HUD Theme
+   SENTINEL CIC — Tactical Military HUD Theme v2.1
    ═══════════════════════════════════════════════════════════════ */
 
 * {
@@ -18,7 +18,6 @@ QMainWindow {
     border-bottom: 1px solid #f59e0b;
     min-height: 36px;
     max-height: 36px;
-    padding: 0px;
 }
 
 #HeaderBar QLabel {
@@ -52,36 +51,50 @@ QMainWindow {
     border-radius: 0px;
 }
 
+#HeaderBar QProgressBar::chunk#CPUChunk {
+    background-color: #22d3ee;
+}
+
+#HeaderBar QProgressBar::chunk#MEMChunk {
+    background-color: #f59e0b;
+}
+
 /* ─── SIDEBAR ─────────────────────────────────────────────────── */
 #Sidebar {
-    background-color: #0c0e14;
+    background-color: #0a0c12;
     border-right: 1px solid #1a1e2e;
-    min-width: 80px;
-    max-width: 80px;
+    min-width: 76px;
+    max-width: 76px;
 }
 
 #Sidebar QPushButton {
-    font-size: 8pt;
+    font-size: 7pt;
     letter-spacing: 1px;
-    padding: 8px 6px;
-    text-align: center;
-    border-left: 2px solid transparent;
+    padding: 6px 4px;
+    text-align: left;
+    border-left: 3px solid transparent;
+    border-right: none;
+    border-top: none;
+    border-bottom: 1px solid #0f121a;
     border-radius: 0px;
-    color: #64748b;
-    min-height: 40px;
+    color: #475569;
+    min-height: 36px;
+    background-color: transparent;
 }
 
 #Sidebar QPushButton:hover {
     background-color: #11151f;
     color: #94a3b8;
-    border-left: 2px solid #475569;
+    border-left: 3px solid #475569;
 }
 
 #Sidebar QPushButton:checked {
     background-color: #11151f;
     color: #f59e0b;
     font-weight: 700;
-    border-left: 2px solid #f59e0b;
+    border-left: 3px solid #f59e0b;
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+        stop: 0 #1a1510, stop: 1 #11151f);
 }
 
 #Sidebar QLabel#SidebarTitle {
@@ -89,19 +102,9 @@ QMainWindow {
     font-weight: 700;
     color: #f59e0b;
     letter-spacing: 4px;
-    padding: 16px 14px 4px 14px;
+    padding: 14px 10px 4px 10px;
     border-bottom: 1px solid #1a1e2e;
 }
-
-#Sidebar QLabel#SidebarSubtitle {
-    font-size: 7pt;
-    color: #475569;
-    letter-spacing: 2px;
-    padding: 0px 14px 12px 14px;
-    border-bottom: 1px solid #1a1e2e;
-}
-
-
 
 /* ─── CONTENT AREA ───────────────────────────────────────────── */
 #ContentArea {
@@ -109,14 +112,26 @@ QMainWindow {
     border: none;
 }
 
+/* ─── LOADING OVERLAY ─────────────────────────────────────────── */
+#LoadingOverlay {
+    background-color: rgba(8, 10, 14, 200);
+    border: 1px solid #f59e0b;
+}
+
+#LoadingOverlay QLabel {
+    color: #f59e0b;
+    font-size: 8pt;
+    letter-spacing: 3px;
+}
+
 /* ─── STAT CARDS (Tactical HUD) ──────────────────────────────── */
 StatCard {
     background-color: #0c0e14;
     border: 1px solid #1a1e2e;
     border-radius: 0px;
-    padding: 12px;
-    min-width: 140px;
-    min-height: 70px;
+    padding: 10px;
+    min-width: 120px;
+    min-height: 60px;
 }
 
 StatCard:hover {
@@ -129,12 +144,11 @@ StatCard QLabel#StatTitle {
     color: #475569;
     font-weight: 600;
     letter-spacing: 2px;
-    text-transform: uppercase;
     padding: 0px;
 }
 
 StatCard QLabel#StatValue {
-    font-size: 22pt;
+    font-size: 20pt;
     font-weight: 700;
     font-family: 'Fira Code', monospace;
     padding: 2px 0px 0px 0px;
@@ -159,7 +173,7 @@ QTableWidget {
 }
 
 QTableWidget::item {
-    padding: 6px 10px;
+    padding: 4px 8px;
     border-bottom: 1px solid #0f121a;
     font-size: 8pt;
 }
@@ -169,16 +183,19 @@ QTableWidget::item:selected {
     color: #f59e0b;
 }
 
+QTableWidget::item:hover {
+    background-color: #0f121a;
+}
+
 QHeaderView::section {
     background-color: #0c0e14;
     color: #475569;
     font-weight: 600;
     font-size: 7pt;
     letter-spacing: 1px;
-    text-transform: uppercase;
     border: none;
     border-bottom: 1px solid #1a1e2e;
-    padding: 8px 10px;
+    padding: 6px 8px;
 }
 
 /* ─── BUTTONS ─────────────────────────────────────────────────── */
@@ -221,6 +238,17 @@ QPushButton#DangerButton:hover {
     background-color: #7f1d1d;
     color: #fef2f2;
     border-color: #ef4444;
+}
+
+QPushButton#SuccessButton {
+    border-color: #064e3b;
+    color: #22d3ee;
+}
+
+QPushButton#SuccessButton:hover {
+    background-color: #064e3b;
+    color: #22d3ee;
+    border-color: #22d3ee;
 }
 
 /* ─── INPUTS ──────────────────────────────────────────────────── */
@@ -300,7 +328,6 @@ QGroupBox::title {
     color: #475569;
     font-size: 7pt;
     letter-spacing: 2px;
-    text-transform: uppercase;
 }
 
 /* ─── TABS ────────────────────────────────────────────────────── */
@@ -315,11 +342,10 @@ QTabBar::tab {
     color: #475569;
     border: 1px solid #1a1e2e;
     border-bottom: none;
-    padding: 8px 16px;
+    padding: 6px 14px;
     font-size: 8pt;
     font-weight: 500;
     letter-spacing: 1px;
-    text-transform: uppercase;
     margin-right: 2px;
 }
 
@@ -339,7 +365,7 @@ QTabBar::tab:hover:!selected {
 /* ─── SCROLLBARS ──────────────────────────────────────────────── */
 QScrollBar:vertical {
     background-color: #080a0e;
-    width: 6px;
+    width: 4px;
     border: none;
 }
 
@@ -359,7 +385,7 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 
 QScrollBar:horizontal {
     background-color: #080a0e;
-    height: 6px;
+    height: 4px;
     border: none;
 }
 
@@ -379,7 +405,6 @@ QLabel#SectionTitle {
     font-weight: 700;
     color: #f59e0b;
     letter-spacing: 3px;
-    text-transform: uppercase;
     padding: 0px 0px 4px 0px;
 }
 
@@ -388,6 +413,37 @@ QLabel#SectionSubtitle {
     color: #475569;
     letter-spacing: 1px;
     padding: 0px 0px 12px 0px;
+}
+
+QLabel#ValueLabel {
+    font-size: 14pt;
+    font-weight: 700;
+    font-family: 'Fira Code', monospace;
+    color: #22d3ee;
+}
+
+/* ─── LIST WIDGET ─────────────────────────────────────────────── */
+QListWidget {
+    background-color: #080a0e;
+    border: 1px solid #1a1e2e;
+    border-radius: 0px;
+    outline: none;
+    font-size: 8pt;
+}
+
+QListWidget::item {
+    padding: 4px 8px;
+    border-bottom: 1px solid #0f121a;
+    color: #94a3b8;
+}
+
+QListWidget::item:selected {
+    background-color: #1a1e2e;
+    color: #f59e0b;
+}
+
+QListWidget::item:hover {
+    background-color: #0f121a;
 }
 
 /* ─── TREE WIDGET ─────────────────────────────────────────────── */
@@ -420,17 +476,18 @@ QToolTip {
 }
 
 /* ─── STATUS BAR ──────────────────────────────────────────────── */
-QStatusBar {
+#StatusBar {
     background-color: #0c0e14;
     border-top: 1px solid #1a1e2e;
+    min-height: 24px;
+    max-height: 24px;
+}
+
+#StatusBar QLabel {
     color: #475569;
     font-size: 7pt;
     letter-spacing: 1px;
     padding: 0px 8px;
-}
-
-QStatusBar::item {
-    border: none;
 }
 
 /* ─── SECTION FRAMES ──────────────────────────────────────────── */
@@ -438,7 +495,6 @@ QFrame#HUDFrame {
     background-color: #0a0c12;
     border: 1px solid #1a1e2e;
     border-radius: 0px;
-    padding: 0px;
 }
 
 QFrame#HUDFrame QLabel#FrameTitle {
@@ -446,7 +502,6 @@ QFrame#HUDFrame QLabel#FrameTitle {
     font-weight: 700;
     color: #22d3ee;
     letter-spacing: 2px;
-    text-transform: uppercase;
     padding: 4px 8px;
     background-color: #0c0e14;
     border-bottom: 1px solid #1a1e2e;
@@ -468,4 +523,96 @@ QFrame#HUDFrame QLabel#FrameTitle {
     border: none;
     background: transparent;
     padding: 0px 8px;
+}
+
+/* ─── CHAT STYLES ─────────────────────────────────────────────── */
+#ChatUserBubble {
+    background-color: #11151f;
+    border: 1px solid #1a1e2e;
+    padding: 8px 12px;
+    font-size: 8pt;
+    color: #c8d6e0;
+}
+
+#ChatAIBubble {
+    background-color: #0c0e14;
+    border: 1px solid #f59e0b;
+    padding: 8px 12px;
+    font-size: 8pt;
+    color: #f59e0b;
+}
+
+/* ─── TIMELINE STYLES ─────────────────────────────────────────── */
+#TimelineNode {
+    background-color: #f59e0b;
+    border: 2px solid #f59e0b;
+    border-radius: 6px;
+    min-width: 8px;
+    min-height: 8px;
+    max-width: 8px;
+    max-height: 8px;
+}
+
+#TimelineLine {
+    background-color: #1a1e2e;
+    min-width: 2px;
+    max-width: 2px;
+}
+
+/* ─── PROGRESS BAR ────────────────────────────────────────────── */
+QProgressBar {
+    background-color: #0a0c12;
+    border: 1px solid #1a1e2e;
+    border-radius: 0px;
+    text-align: center;
+    font-size: 7pt;
+    color: #94a3b8;
+    min-height: 14px;
+}
+
+QProgressBar::chunk {
+    background-color: #f59e0b;
+    border-radius: 0px;
+}
+
+/* ─── CARD CONTAINER ──────────────────────────────────────────── */
+#CardContainer {
+    background-color: #0a0c12;
+    border: 1px solid #1a1e2e;
+    padding: 8px;
+}
+
+#CardTitle {
+    font-size: 8pt;
+    font-weight: 700;
+    color: #f59e0b;
+    letter-spacing: 1px;
+}
+
+#CardSubtext {
+    font-size: 7pt;
+    color: #475569;
+}
+
+/* ─── PULSE ANIMATION (CSS border glow) ─────────────────────────── */
+QPushButton#PulseButton {
+    border: 1px solid #f59e0b;
+    color: #f59e0b;
+}
+
+QPushButton#PulseButton:hover {
+    background-color: #f59e0b;
+    color: #080a0e;
+}
+
+/* ─── ALERT BADGE ─────────────────────────────────────────────── */
+#AlertBadge {
+    background-color: #ef4444;
+    color: #080a0e;
+    font-size: 7pt;
+    font-weight: 700;
+    padding: 0px 4px;
+    min-width: 16px;
+    min-height: 14px;
+    border-radius: 0px;
 }

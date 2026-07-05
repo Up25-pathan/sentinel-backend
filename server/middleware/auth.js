@@ -2,6 +2,14 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 /**
+ * Sanitize input — strip HTML tags and trim whitespace
+ */
+function sanitizeInput(str) {
+    if (typeof str !== 'string') return str;
+    return str.replace(/<[^>]*>/g, '').trim();
+}
+
+/**
  * API Key Middleware — requires X-API-Key header on ALL requests
  * This is a second layer of security beyond JWT tokens.
  * Set API_SECRET_KEY in your Render env vars.
@@ -29,6 +37,15 @@ function authMiddleware(req, res, next) {
     // Skip auth for login and health endpoints
     if (req.path === '/api/auth/login' || req.path === '/api/health') {
         return next();
+    }
+
+    // Sanitize request body fields
+    if (req.body && typeof req.body === 'object') {
+        for (const key of Object.keys(req.body)) {
+            if (typeof req.body[key] === 'string') {
+                req.body[key] = sanitizeInput(req.body[key]);
+            }
+        }
     }
 
     const authHeader = req.headers.authorization;

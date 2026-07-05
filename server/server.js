@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const http = require('http');
+const morgan = require('morgan');
+const helmet = require('helmet');
 const { WebSocketServer } = require('ws');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
@@ -41,8 +43,10 @@ const authLimiter = rateLimit({
 });
 
 // ─── Middleware ─────────────────────────────────────────────────
+app.use(helmet());
 app.use(cors());
 app.use(express.json());
+app.use(morgan('combined'));
 app.use(generalLimiter);
 app.use(securityHeaders);
 app.use(apiKeyMiddleware);
@@ -138,8 +142,25 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Internal server error' });
 });
 
+// ─── Environment Validation ────────────────────────────────────
+function validateEnv() {
+    const required = [];
+    const optional = ['JWT_SECRET', 'AUTH_USERNAME', 'AUTH_PASSWORD', 'PORT'];
+    const missing = required.filter(k => !process.env[k]);
+    if (missing.length > 0) {
+        console.warn(`Missing required env vars: ${missing.join(', ')}`);
+    }
+    console.log('Environment validation complete');
+}
+
+// ─── Auth Check (health) ───────────────────────────────────────
+app.post('/api/auth/check', (req, res) => {
+    res.json({ valid: true });
+});
+
 // ─── Start Server ──────────────────────────────────────────────
 function start() {
+    validateEnv();
     getDb();
 
     const server = http.createServer(app);

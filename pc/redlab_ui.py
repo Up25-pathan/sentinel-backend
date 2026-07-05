@@ -17,6 +17,11 @@ from ui.panels.reports import ReportsPanel
 from ui.panels.redops import RedOpsPanel
 from ui.panels.campaigns import CampaignsPanel
 from ui.panels.audit_log import AuditLogPanel
+from ui.panels.threat_feeds import ThreatFeedsPanel
+from ui.panels.timeline_view import TimelinePanel
+from ui.panels.network_scanner import NetworkScannerPanel
+from ui.panels.vuln_db import VulnDBPanel
+from ui.panels.assets import AssetsPanel
 from utils import audit, system_monitor
 from utils.api_client import ApiClient
 
@@ -204,13 +209,19 @@ class MainWindow(QMainWindow):
         self.panels["redops"] = RedOpsPanel()
         self.panels["campaign"] = CampaignsPanel()
         self.panels["audit"] = AuditLogPanel()
+        self.panels["feeds"] = ThreatFeedsPanel(self.api_client)
+        self.panels["timeline"] = TimelinePanel(self.api_client)
+        self.panels["scanner"] = NetworkScannerPanel()
+        self.panels["vulndb"] = VulnDBPanel(self.api_client)
+        self.panels["assets"] = AssetsPanel()
 
-        self.panel_keys = ["dashboard", "intel", "osint", "darkweb", "alerts", "map", "chat", "export", "redops", "campaign", "audit"]
+        self.panel_keys = ["dashboard", "intel", "osint", "darkweb", "alerts", "map", "chat", "feeds", "timeline", "scanner", "vulndb", "assets", "export", "redops", "campaign", "audit"]
         for key in self.panel_keys:
             self.content.addWidget(self.panels[key])
 
     def _build_status(self, parent):
         s = QWidget()
+        s.setObjectName("StatusBar")
         s.setFixedHeight(24)
         l = QHBoxLayout(s)
         l.setContentsMargins(8, 0, 8, 0)
@@ -219,7 +230,7 @@ class MainWindow(QMainWindow):
         self.status_label.setStyleSheet("color: #475569; font-size: 7pt; letter-spacing: 1px;")
         l.addWidget(self.status_label)
         l.addStretch()
-        ver = QLabel("v2.0.0 — CIC BUILD")
+        ver = QLabel("v2.1.0 — CIC BUILD")
         ver.setStyleSheet("color: #1e293b; font-size: 7pt;")
         l.addWidget(ver)
         parent.addWidget(s)
