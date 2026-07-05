@@ -1,0 +1,30 @@
+redlab-console/
+│── redlab_ui.py             
+│── requirements.txt          # Dependencies list
+│
+├── bin/                      # Job runner scripts (safe wrappers)
+│   ├── recon_job.py
+│   ├── web_job.py
+│   ├── privesc_job.py
+│   ├── exploit_dev_job.py
+│   ├── wifi_job.py
+│   └── __init__.py
+│
+├── db/                       # SQLite audit DB + schema
+│   └── audit.db
+│
+├── artifacts/                # All job results go here
+│   ├── web_lab/
+│   │   └── 2025-08-26_12-01-22/   # timestamped run dirs
+│   ├── linux_lab/
+│   └── ...
+│
+├── labs/                     # (optional) docker-compose or lab configs
+│   ├── docker-compose.yml
+│   └── setup_scripts/
+│
+└── utils/                    # Shared helpers
+    ├── audit.py              # log actions to db/audit.db
+    ├── docker_tools.py       # list containers, manage labs
+    ├── system_monitor.py     # cpu/mem/disk helpers
+    └── __init__.py
