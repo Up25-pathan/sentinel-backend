@@ -85,6 +85,39 @@ app.get('/api/events/stream', (req, res) => {
     });
 });
 
+// ─── Conflict Zones (no auth, proxies GDELT) ────────────────────
+let conflictCache = { data: null, time: 0 };
+const GDELT_GEO_URL = 'https://api.gdeltproject.org/api/v2/geo/geo?query=conflict%20OR%20violence%20OR%20war&format=geojson&timespan=14d';
+
+app.get('/api/map/conflicts', async (req, res) => {
+    const CACHE_TTL = 120000;
+    if (Date.now() - conflictCache.time < CACHE_TTL && conflictCache.data) {
+        return res.json(conflictCache.data);
+    }
+    try {
+        const resp = await fetch(GDELT_GEO_URL, { signal: AbortSignal.timeout(8000) });
+        const raw = await resp.json();
+        const features = (raw.features || []).filter(f => f.geometry && f.geometry.coordinates).map(f => ({
+            name: f.properties.Name || f.properties.Actor1Name || f.properties.Actor2Name || 'Unknown',
+            label: f.properties.EventCode || 'Conflict Event',
+            lat: f.geometry.coordinates[1],
+            lng: f.geometry.coordinates[0],
+            severity: f.properties.NumArticles ? (parseInt(f.properties.NumArticles) > 10 ? 'high' : parseInt(f.properties.NumArticles) > 3 ? 'medium' : 'low') : 'low',
+            source: 'GDELT',
+            url: f.properties.SOURCEURL || '',
+        }));
+        const result = { zones: [], events: features, count: features.length };
+        conflictCache = { data: result, time: Date.now() };
+        res.json(result);
+    } catch (err) {
+        if (conflictCache.data) {
+            res.json({ ...conflictCache.data, stale: true });
+        } else {
+            res.json({ zones: [], events: [], count: 0 });
+        }
+    }
+});
+
 // ─── Aviation Data (no auth, proxies OpenSky) ──────────────────
 let aviationCache = { data: null, time: 0 };
 const OPENSKY_URL = 'https://opensky-network.org/api/states/all';
