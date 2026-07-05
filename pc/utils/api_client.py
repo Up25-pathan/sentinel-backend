@@ -14,6 +14,7 @@ class ApiClient(QObject):
     darkwebDataReady = pyqtSignal(dict)
     alertsDataReady = pyqtSignal(list)
     breakingEventsReady = pyqtSignal(list)
+    eventDetailReady = pyqtSignal(dict)
     loginResult = pyqtSignal(bool, str)
     errorOccurred = pyqtSignal(str)
     sseEvent = pyqtSignal(str, object)
@@ -187,6 +188,8 @@ class ApiClient(QObject):
             self.alertsDataReady.emit(alerts)
         elif tag == "map_markers":
             self.dashboardDataReady.emit({"map_markers": parsed.get("markers", [])})
+        elif tag and tag.startswith("event_detail:"):
+            self.eventDetailReady.emit(parsed)
         elif tag == "seed":
             pass
 
