@@ -33,27 +33,41 @@ class DetailWidget(QScrollArea):
         self.lay.setContentsMargins(12, 12, 12, 12)
         self.lay.setSpacing(8)
         self.setWidget(self.inner)
+        self._nam = QNetworkAccessManager(self)
+        self._pending_images = []
         self._clear()
 
     def _clear(self):
-        for i in reversed(range(self.lay.count())):
-            w = self.lay.itemAt(i).widget()
-            if w: w.deleteLater()
+        self._abort_images()
+        self._clear_layout()
         self.lay.addWidget(QLabel("Select an event to view details"))
         self._is_busy = False
 
     def _loading(self):
-        for i in reversed(range(self.lay.count())):
-            w = self.lay.itemAt(i).widget()
-            if w: w.deleteLater()
+        self._abort_images()
+        self._clear_layout()
         self.lay.addWidget(QLabel("Loading..."))
         self._is_busy = True
 
-    def show_event(self, data):
-        self._is_busy = False
+    def _clear_layout(self):
         for i in reversed(range(self.lay.count())):
             w = self.lay.itemAt(i).widget()
-            if w: w.deleteLater()
+            if w: w.setParent(None); w.deleteLater()
+
+    def _abort_images(self):
+        for reply in self._pending_images:
+            try:
+                reply.finished.disconnect()
+                reply.abort()
+                reply.deleteLater()
+            except:
+                pass
+        self._pending_images.clear()
+
+    def show_event(self, data):
+        self._abort_images()
+        self._clear_layout()
+        self._is_busy = False
 
         # ── Header ──
         title = QLabel(data.get("title", ""))
@@ -191,12 +205,17 @@ class DetailWidget(QScrollArea):
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setStyleSheet("color:#1e293b; font-size:7pt;")
             return
-        nam = QNetworkAccessManager()
-        req = QNetworkRequest(QUrl(url))
-        reply = nam.get(req)
-        reply.finished.connect(lambda: self._on_image_loaded(label, reply))
+        try:
+            req = QNetworkRequest(QUrl(url))
+            reply = self._nam.get(req)
+            self._pending_images.append(reply)
+            reply.finished.connect(lambda r=reply, l=label: self._on_image_loaded(l, r))
+        except:
+            pass
 
     def _on_image_loaded(self, label, reply):
+        if reply in self._pending_images:
+            self._pending_images.remove(reply)
         if reply.error() == QNetworkReply.NetworkError.NoError:
             data = reply.readAll()
             pix = QPixmap()

@@ -81,22 +81,25 @@ class MainWindow(QMainWindow):
         self.api_client.fetch_alerts()
 
     def _on_alerts_for_notify(self, alerts):
-        if not isinstance(alerts, list):
-            return
-        count = len(alerts)
-        if count > self._last_alert_count:
-            diff = count - self._last_alert_count
-            recent = alerts[:diff]
-            for alert in recent:
-                msg = alert.get("message", alert.get("title", "New alert"))
-                self.tray.showMessage(
-                    "SENTINEL ALERT",
-                    msg,
-                    QSystemTrayIcon.MessageIcon.Warning,
-                    5000
-                )
-                audit.log_action("NOTIFICATION", msg)
-        self._last_alert_count = count
+        try:
+            if not isinstance(alerts, list):
+                return
+            count = len(alerts)
+            if count > self._last_alert_count:
+                diff = count - self._last_alert_count
+                recent = alerts[:diff]
+                for alert in recent:
+                    msg = alert.get("message", alert.get("title", "New alert"))
+                    self.tray.showMessage(
+                        "SENTINEL ALERT",
+                        msg,
+                        QSystemTrayIcon.MessageIcon.Warning,
+                        5000
+                    )
+                    audit.log_action("NOTIFICATION", msg)
+            self._last_alert_count = count
+        except Exception as e:
+            print(f"Notification error: {e}")
 
     def _setup_ui(self):
         central = QWidget()
@@ -185,7 +188,15 @@ class MainWindow(QMainWindow):
         self.panels["osint"] = OSINTFeedPanel(self.api_client)
         self.panels["darkweb"] = DarkWebPanel(self.api_client)
         self.panels["alerts"] = AlertsPanel(self.api_client)
-        self.panels["map"] = GeopoliticalMapPanel(self.api_client)
+        try:
+            self.panels["map"] = GeopoliticalMapPanel(self.api_client)
+        except Exception as e:
+            print(f"Map panel init error: {e}")
+            from PyQt6.QtWidgets import QLabel
+            w = QWidget()
+            l = QVBoxLayout(w)
+            l.addWidget(QLabel(f"Map panel unavailable: {e}"))
+            self.panels["map"] = w
         self.panels["redops"] = RedOpsPanel()
         self.panels["campaign"] = CampaignsPanel()
         self.panels["audit"] = AuditLogPanel()
@@ -258,33 +269,39 @@ class MainWindow(QMainWindow):
             self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
 
     def _start_sse(self):
-        self.api_client.connect_sse()
-        self.sse_label.setText("SSE: CONNECTING")
+        try:
+            self.api_client.connect_sse()
+            self.sse_label.setText("SSE: CONNECTING")
+        except Exception as e:
+            print(f"SSE start error: {e}")
 
     def _on_sse_event(self, event_type, data):
-        if event_type == "connected":
-            self.sse_label.setText("SSE: \u25CF LIVE")
-            self.sse_label.setStyleSheet("color: #22d3ee; font-size: 7pt;")
-        elif event_type == "new_event":
-            title = data.get("title", "Unknown event")
-            risk = data.get("risk_level", "")
-            if risk in ("CRITICAL", "HIGH") or data.get("is_breaking"):
+        try:
+            if event_type == "connected":
+                self.sse_label.setText("SSE: \u25CF LIVE")
+                self.sse_label.setStyleSheet("color: #22d3ee; font-size: 7pt;")
+            elif event_type == "new_event":
+                title = data.get("title", "Unknown event")
+                risk = data.get("risk_level", "")
+                if risk in ("CRITICAL", "HIGH") or data.get("is_breaking"):
+                    self.tray.showMessage(
+                        "NEW EVENT",
+                        f"[{risk}] {title}",
+                        QSystemTrayIcon.MessageIcon.Warning,
+                        5000
+                    )
+                    audit.log_action("SSE_EVENT", f"[{risk}] {title}")
+            elif event_type == "new_alert":
+                msg = data.get("message", data.get("event_title", "New alert"))
                 self.tray.showMessage(
-                    "NEW EVENT",
-                    f"[{risk}] {title}",
-                    QSystemTrayIcon.MessageIcon.Warning,
+                    "SENTINEL ALERT",
+                    msg,
+                    QSystemTrayIcon.MessageIcon.Critical,
                     5000
                 )
-                audit.log_action("SSE_EVENT", f"[{risk}] {title}")
-        elif event_type == "new_alert":
-            msg = data.get("message", data.get("event_title", "New alert"))
-            self.tray.showMessage(
-                "SENTINEL ALERT",
-                msg,
-                QSystemTrayIcon.MessageIcon.Critical,
-                5000
-            )
-            audit.log_action("SSE_ALERT", msg)
+                audit.log_action("SSE_ALERT", msg)
+        except Exception as e:
+            print(f"SSE event error: {e}")
 
     def _auto_login(self):
         QTimer.singleShot(500, lambda: self.api_client.login())
