@@ -186,28 +186,44 @@ function startAircraftUpdates() {
   aircraftTimer = setInterval(loadAircraft, 30000);
 }
 
-// ─── Conflict Zones ─────────────────────────────────────────────
-const CONFLICT_ZONES = [
-  { name: 'Ukraine War', coords: [[52.0, 22.0], [52.5, 40.0], [46.0, 40.0], [44.0, 33.0], [46.0, 30.0], [47.5, 26.0], [49.0, 22.5]], color: '#ef4444', label: 'ACTIVE WAR' },
-  { name: 'Gaza Strip', coords: [[31.6, 34.2], [31.6, 34.6], [31.3, 34.6], [31.3, 34.2]], color: '#ef4444', label: 'CONFLICT ZONE' },
-  { name: 'Myanmar', coords: [[28.5, 92.0], [28.5, 102.0], [10.0, 102.0], [10.0, 92.0]], color: '#f59e0b', label: 'CIVIL WAR' },
-  { name: 'Sudan', coords: [[22.0, 22.0], [22.0, 38.0], [8.0, 38.0], [8.0, 22.0]], color: '#f59e0b', label: 'CONFLICT' },
-  { name: 'Yemen', coords: [[19.0, 42.0], [19.0, 54.0], [12.5, 54.0], [12.5, 42.0]], color: '#ef4444', label: 'CIVIL WAR' },
-  { name: 'South China Sea', coords: [[22.0, 111.0], [22.0, 122.0], [10.0, 122.0], [10.0, 111.0]], color: '#f59e0b', label: 'DISPUTED WATERS' },
-  { name: 'Sahel Region', coords: [[20.0, -17.0], [20.0, 30.0], [12.0, 30.0], [12.0, -17.0]], color: '#f59e0b', label: 'INSURGENCY' },
-  { name: 'Taiwan Strait', coords: [[27.0, 118.0], [27.0, 124.0], [22.0, 124.0], [22.0, 118.0]], color: '#f59e0b', label: 'HEIGHTENED TENSION' },
-];
-
-function buildConflictZones() {
-  CONFLICT_ZONES.forEach(function(zone) {
-    const polygon = L.polygon(zone.coords, {
-      color: zone.color,
-      fillColor: zone.color,
-      fillOpacity: 0.12,
-      weight: 1.5,
-      className: 'conflict-zone',
-    }).bindPopup('<div class="popup-custom"><h3>' + zone.name + '</h3><div class="loc">' + zone.label + '</div></div>').addTo(conflictLayer);
-  });
+// ─── Conflict Zones (from server) ─────────────────────────────
+function loadConflicts() {
+  fetch(API_URL + '/api/map/conflicts')
+    .then(r => r.json())
+    .then(data => {
+      conflictLayer.clearLayers();
+      // Polygon zones
+      (data.zones || []).forEach(function(zone) {
+        if (!zone.coords || zone.coords.length < 3) return;
+        L.polygon(zone.coords, {
+          color: zone.color || '#ef4444',
+          fillColor: zone.color || '#ef4444',
+          fillOpacity: 0.12,
+          weight: 1.5,
+          className: 'conflict-zone',
+        }).bindPopup(
+          '<div class="popup-custom"><h3>' + (zone.name || 'Conflict Zone') + '</h3>'
+          + '<div class="loc">' + (zone.label || '') + '</div>'
+          + (zone.source ? '<div class="summ" style="font-size:8px">Src: ' + zone.source + '</div>' : '')
+          + '</div>'
+        ).addTo(conflictLayer);
+      });
+      // Point events from GDELT
+      (data.events || []).forEach(function(ev) {
+        if (!ev.lat || !ev.lng) return;
+        const color = ev.severity === 'high' ? '#ef4444' : ev.severity === 'medium' ? '#f59e0b' : '#64748b';
+        L.circleMarker([ev.lat, ev.lng], {
+          radius: ev.severity === 'high' ? 6 : 4,
+          color: color, fillColor: color, fillOpacity: 0.6, weight: 1,
+        }).bindPopup(
+          '<div class="popup-custom"><h3>' + (ev.name || 'Event') + '</h3>'
+          + '<div class="loc">' + (ev.label || '') + '</div>'
+          + '<div class="summ">Severity: ' + ev.severity + '</div>'
+          + '</div>'
+        ).addTo(conflictLayer);
+      });
+    })
+    .catch(function(err) { console.error('Conflict zones error:', err); });
 }
 
 // ─── Legend ─────────────────────────────────────────────────────
@@ -220,18 +236,18 @@ legend.onAdd = function() {
     + '<i style="background:#22d3ee"></i> MEDIUM<br>'
     + '<i style="background:#475569"></i> LOW<br>'
     + '<hr style="border-color:#1e293b;margin:4px 0">'
-    + '<span style="color:#22d3ee">&#x2708;</span> FLIGHT ROUTE<br>'
-    + '<i style="background:#ef4444"></i> CONFLICT ZONE<br>'
-    + '<i style="background:#f59e0b"></i> TENSION';
+    + '<span style="color:#22d3ee">&#9650;</span> AIRCRAFT<br>'
+    + '<i style="background:#ef4444;border-radius:0"></i> CONFLICT ZONE';
   return div;
 };
 legend.addTo(map);
 
 // ─── Init ──────────────────────────────────────────────────────
 loadMarkers();
-buildConflictZones();
+loadConflicts();
 startAircraftUpdates();
 setInterval(loadMarkers, 30000);
+setInterval(loadConflicts, 300000);
 </script>
 </body>
 </html>"""
