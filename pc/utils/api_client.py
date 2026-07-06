@@ -18,6 +18,7 @@ class ApiClient(QObject):
     loginResult = pyqtSignal(bool, str)
     errorOccurred = pyqtSignal(str)
     sseEvent = pyqtSignal(str, object)
+    sseStatusChanged = pyqtSignal(bool)
 
     def __init__(self):
         super().__init__()
@@ -29,6 +30,7 @@ class ApiClient(QObject):
         self._sse_timer = QTimer(self)
         self._sse_timer.timeout.connect(self._connect_sse_internal)
         self._sse_active = False
+        self._sse_retries = 0
 
     def login(self, username="admin", password="intel2024"):
         url = QUrl(f"{SERVER_URL}/api/auth/login")
@@ -48,6 +50,8 @@ class ApiClient(QObject):
         if self._sse_active:
             return
         self._sse_active = True
+        self._sse_retries = 0
+        self.sseStatusChanged.emit(True)
         self._connect_sse_internal()
 
     def _connect_sse_internal(self):
@@ -151,8 +155,11 @@ class ApiClient(QObject):
 
         if tag == "sse":
             self._sse_active = False
+            self.sseStatusChanged.emit(False)
             reply.deleteLater()
-            QTimer.singleShot(5000, self.connect_sse)
+            self._sse_retries += 1
+            delay = min(1000 * self._sse_retries, 10000)
+            QTimer.singleShot(delay, self.connect_sse)
             return
 
         if reply.error() != QNetworkReply.NetworkError.NoError:

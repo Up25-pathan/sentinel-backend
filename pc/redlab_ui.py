@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PyQt6.QtCore import QUrl
-import time
 from PyQt6.QtGui import QIcon
 from ui.sidebar import Sidebar
 from ui.panels.dashboard import DashboardPanel
@@ -44,7 +43,7 @@ class MainWindow(QMainWindow):
             self._setup_monitor()
             self._connect_signals()
             self._auto_login()
-            self._start_notification_poller()
+            # notifications disabled
         except Exception as e:
             print(f"Init error: {e}")
             import traceback
@@ -77,8 +76,7 @@ class MainWindow(QMainWindow):
             icon = QIcon(p)
         self.tray.setIcon(icon)
         self.tray.show()
-        self._notified_alert_ids = set()
-        self._last_notify = 0
+        # notifications disabled
         self._health_nam = QNetworkAccessManager(self)
         self._health_reply = None
 
@@ -88,40 +86,7 @@ class MainWindow(QMainWindow):
             self.raise_()
             self.activateWindow()
 
-    def _start_notification_poller(self):
-        self.notify_timer = QTimer(self)
-        self.notify_timer.timeout.connect(self._check_new_alerts)
-        self.notify_timer.start(60000)
-
-    def _check_new_alerts(self):
-        if not self.api_client.is_authenticated():
-            return
-        self.api_client.fetch_alerts()
-
-    def _on_alerts_for_notify(self, alerts):
-        try:
-            if not isinstance(alerts, list):
-                return
-            now_ids = set()
-            for a in alerts:
-                aid = a.get("id", a.get("_id", hash(str(a.get("message", "")))))
-                now_ids.add(str(aid))
-            new_ids = now_ids - self._notified_alert_ids
-            if new_ids:
-                for alert in alerts:
-                    aid = str(alert.get("id", alert.get("_id", hash(str(alert.get("message", ""))))))
-                    if aid in new_ids:
-                        msg = alert.get("message", alert.get("title", "New alert")) or "New alert"
-                        self.tray.showMessage(
-                            "SENTINEL ALERT",
-                            msg,
-                            QSystemTrayIcon.MessageIcon.Warning,
-                            5000
-                        )
-                        audit.log_action("NOTIFICATION", msg)
-                self._notified_alert_ids = now_ids
-        except Exception as e:
-            print(f"Notification error: {e}")
+    # notifications disabled
 
     def _setup_ui(self):
         central = QWidget()
@@ -268,8 +233,11 @@ class MainWindow(QMainWindow):
         self.sidebar.navigationChanged.connect(self._on_nav)
         self.api_client.loginResult.connect(self._on_login)
         self.api_client.errorOccurred.connect(self._on_err)
-        self.api_client.alertsDataReady.connect(self._on_alerts_for_notify)
         self.api_client.sseEvent.connect(self._on_sse_event)
+        self.api_client.sseStatusChanged.connect(self._on_sse_status)
+        self._health_timer = QTimer(self)
+        self._health_timer.timeout.connect(self._check_server)
+        self._health_timer.start(30000)
 
     def _on_nav(self, key):
         if key in self.panels:
@@ -310,36 +278,19 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"SSE start error: {e}")
 
+    def _on_sse_status(self, live):
+        if live:
+            self.sse_label.setText("SSE: \u25CF LIVE")
+            self.sse_label.setStyleSheet("color: #22d3ee; font-size: 7pt;")
+        else:
+            self.sse_label.setText("SSE: \u25CB RECONNECT")
+            self.sse_label.setStyleSheet("color: #f59e0b; font-size: 7pt;")
+
     def _on_sse_event(self, event_type, data):
         try:
             if event_type == "connected":
-                self.sse_label.setText("SSE: \u25CF LIVE")
-                self.sse_label.setStyleSheet("color: #22d3ee; font-size: 7pt;")
                 return
-            now = time.time()
-            if now - self._last_notify < 3:
-                return
-            self._last_notify = now
-            if event_type == "new_event":
-                title = data.get("title", "Unknown event")
-                risk = data.get("risk_level", "")
-                if risk in ("CRITICAL", "HIGH") or data.get("is_breaking"):
-                    self.tray.showMessage(
-                        "NEW EVENT",
-                        f"[{risk}] {title}",
-                        QSystemTrayIcon.MessageIcon.Warning,
-                        5000
-                    )
-                    audit.log_action("SSE_EVENT", f"[{risk}] {title}")
-            elif event_type == "new_alert":
-                msg = data.get("message", data.get("event_title", "New alert"))
-                self.tray.showMessage(
-                    "SENTINEL ALERT",
-                    msg,
-                    QSystemTrayIcon.MessageIcon.Critical,
-                    5000
-                )
-                audit.log_action("SSE_ALERT", msg)
+            # notifications disabled
         except Exception as e:
             print(f"SSE event error: {e}")
 
@@ -355,15 +306,18 @@ class MainWindow(QMainWindow):
         def on_health():
             try:
                 if self._health_reply and self._health_reply.error() == QNetworkReply.NetworkError.NoError:
+                    was_offline = not self.api_client.is_authenticated()
                     self.conn_label.setText(f"\u25CF {short}")
-                    self.conn_label.setStyleSheet("color: #f59e0b; font-size: 8pt; letter-spacing: 1px;")
-                    self.status_label.setText("SERVER ONLINE — AUTHENTICATING...")
-                    self.api_client.login()
+                    self.conn_label.setStyleSheet("color: #22d3ee; font-size: 8pt; letter-spacing: 1px;")
+                    self.status_label.setText("ALL SYSTEMS ONLINE")
+                    if was_offline:
+                        self.status_label.setText("SERVER ONLINE — AUTHENTICATING...")
+                        self.api_client.login()
                 else:
                     err = self._health_reply.errorString() if self._health_reply else "No reply"
                     self.conn_label.setText(f"\u26AA {short}")
                     self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
-                    self.status_label.setText(f"SERVER UNREACHABLE — {err[:50]}")
+                    self.status_label.setText(f"SRV OFFLINE — {err[:50]}")
             except Exception as e:
                 print(f"Health check error: {e}")
             finally:

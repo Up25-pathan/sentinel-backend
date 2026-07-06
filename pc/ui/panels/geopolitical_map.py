@@ -18,6 +18,13 @@ MAP_HTML_TEMPLATE = r"""<!DOCTYPE html>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #080a0e; font-family: 'Courier New', monospace; }
   #map { width: 100vw; height: 100vh; }
+  #status {
+    position: absolute; top: 10px; left: 10px; z-index: 1000;
+    background: rgba(8,10,14,0.92); color: #f59e0b;
+    padding: 6px 12px; border: 1px solid #1e293b;
+    font: 9px 'Courier New', monospace; letter-spacing: 1px;
+    pointer-events: none;
+  }
   .legend {
     background: rgba(8,10,14,0.92); color: #94a3b8; padding: 10px 14px;
     border: 1px solid #1e293b; border-radius: 0;
@@ -40,17 +47,21 @@ MAP_HTML_TEMPLATE = r"""<!DOCTYPE html>
   .marker-high { color: #f59e0b; font-size: 18px; text-shadow: 0 0 6px rgba(245,158,11,0.5); }
   .marker-medium { color: #22d3ee; font-size: 16px; text-shadow: 0 0 4px rgba(34,211,238,0.4); }
   .marker-low { color: #475569; font-size: 14px; }
-  .flight-path { stroke: #22d3ee; stroke-width: 1; stroke-opacity: 0.25; stroke-dasharray: 4 4; }
-  .flight-path:hover { stroke-opacity: 0.7; stroke-width: 2; }
-  .flight-dot { color: #22d3ee; font-size: 6px; text-shadow: 0 0 4px rgba(34,211,238,0.8); }
   .conflict-zone { fill-opacity: 0.15; stroke-width: 1.5; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="status">CONNECTING...</div>
 <script>
 const API_URL = %API_URL%;
 const TOKEN = %TOKEN%;
+const STATUS = document.getElementById('status');
+
+function setStatus(msg, color) {
+  STATUS.textContent = msg;
+  if (color) STATUS.style.color = color;
+}
 
 const map = L.map('map', {
   center: [20, 0], zoom: 2,
@@ -63,12 +74,10 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   maxZoom: 19
 }).addTo(map);
 
-// ─── Layer Groups ──────────────────────────────────────────────
 const intelLayer = L.layerGroup().addTo(map);
 const aviationLayer = L.layerGroup().addTo(map);
 const conflictLayer = L.layerGroup().addTo(map);
 
-// ─── Layer Toggle Control ──────────────────────────────────────
 const layerControl = L.control({ position: 'topright' });
 layerControl.onAdd = function() {
   const div = L.DomUtil.create('div', '');
@@ -79,13 +88,12 @@ layerControl.onAdd = function() {
   div.addEventListener('click', function(e) {
     const target = e.target;
     if (!target.dataset.layer) return;
-    const layer = target.dataset.layer;
     const groups = { intel: intelLayer, aviation: aviationLayer, conflict: conflictLayer };
-    if (map.hasLayer(groups[layer])) {
-      map.removeLayer(groups[layer]);
+    if (map.hasLayer(groups[target.dataset.layer])) {
+      map.removeLayer(groups[target.dataset.layer]);
       target.style.color = '#475569';
     } else {
-      map.addLayer(groups[layer]);
+      map.addLayer(groups[target.dataset.layer]);
       target.style.color = '#f59e0b';
     }
   });
@@ -93,7 +101,6 @@ layerControl.onAdd = function() {
 };
 layerControl.addTo(map);
 
-// ─── Intel Markers ─────────────────────────────────────────────
 const ICONS = {
   CRITICAL: L.divIcon({ className: '', html: '<span class="marker-critical">&#9679;</span>', iconSize: [20, 20], iconAnchor: [10, 10] }),
   HIGH:     L.divIcon({ className: '', html: '<span class="marker-high">&#9679;</span>', iconSize: [18, 18], iconAnchor: [9, 9] }),
@@ -105,15 +112,24 @@ function getIcon(risk) {
   return ICONS[risk] || ICONS.LOW;
 }
 
+function fetchJSON(url, headers) {
+  return fetch(url, headers).then(function(r) {
+    if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+    return r.json();
+  });
+}
+
 function loadMarkers() {
+  if (!TOKEN) { setStatus('NO AUTH TOKEN', '#ef4444'); return; }
+  setStatus('LOADING INTEL...', '#22d3ee');
   const headers = { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' };
-  fetch(API_URL + '/api/map/markers', { headers })
-    .then(r => r.json())
-    .then(data => {
+  fetchJSON(API_URL + '/api/map/markers', { headers: headers })
+    .then(function(data) {
       intelLayer.clearLayers();
-      const items = data.markers || [];
-      items.forEach(function(e) {
+      var count = 0;
+      (data.markers || []).forEach(function(e) {
         if (!e.lat || !e.lng) return;
+        count++;
         const color = e.risk_level === 'CRITICAL' ? '#ef4444' : e.risk_level === 'HIGH' ? '#f59e0b' : e.risk_level === 'MEDIUM' ? '#22d3ee' : '#475569';
         const marker = L.marker([e.lat, e.lng], { icon: getIcon(e.risk_level) });
         marker.bindPopup(
@@ -127,24 +143,24 @@ function loadMarkers() {
         );
         intelLayer.addLayer(marker);
       });
+      setStatus(count + ' INTEL MARKERS', '#f59e0b');
     })
-    .catch(function(err) { console.error('Intel markers error:', err); });
+    .catch(function(err) {
+      console.error('Intel markers error:', err);
+      setStatus('INTEL OFFLINE: ' + err.message.substring(0, 40), '#ef4444');
+    });
 }
 
-// ─── Aviation: Real Aircraft (OpenSky via proxy) ──────────────
-let aircraftMarkers = {};
-let aircraftTimer = null;
+var aircraftMarkers = {};
+var aircraftTimer = null;
 
 function loadAircraft() {
-  fetch(API_URL + '/api/map/aviation')
-    .then(r => r.json())
-    .then(data => {
+  fetchJSON(API_URL + '/api/map/aviation')
+    .then(function(data) {
       const now = Date.now();
-      const seen = new Set();
       (data.aircraft || []).forEach(function(a) {
         if (!a.lat || !a.lng) return;
         const key = a.icao24 || (a.lat + ',' + a.lng);
-        seen.add(key);
         if (aircraftMarkers[key]) {
           aircraftMarkers[key].setLatLng([a.lat, a.lng]);
           aircraftMarkers[key]._lastSeen = now;
@@ -170,9 +186,8 @@ function loadAircraft() {
           aircraftMarkers[key] = marker;
         }
       });
-      // Remove stale aircraft (no update in 120s)
       Object.keys(aircraftMarkers).forEach(function(key) {
-        if (now - aircraftMarkers[key]._lastSeen > 120000) {
+        if (Date.now() - aircraftMarkers[key]._lastSeen > 120000) {
           aviationLayer.removeLayer(aircraftMarkers[key]);
           delete aircraftMarkers[key];
         }
@@ -186,13 +201,10 @@ function startAircraftUpdates() {
   aircraftTimer = setInterval(loadAircraft, 30000);
 }
 
-// ─── Conflict Zones (from server) ─────────────────────────────
 function loadConflicts() {
-  fetch(API_URL + '/api/map/conflicts')
-    .then(r => r.json())
-    .then(data => {
+  fetchJSON(API_URL + '/api/map/conflicts')
+    .then(function(data) {
       conflictLayer.clearLayers();
-      // Polygon zones
       (data.zones || []).forEach(function(zone) {
         if (!zone.coords || zone.coords.length < 3) return;
         L.polygon(zone.coords, {
@@ -208,7 +220,6 @@ function loadConflicts() {
           + '</div>'
         ).addTo(conflictLayer);
       });
-      // Point events from GDELT
       (data.events || []).forEach(function(ev) {
         if (!ev.lat || !ev.lng) return;
         const color = ev.severity === 'high' ? '#ef4444' : ev.severity === 'medium' ? '#f59e0b' : '#64748b';
@@ -226,7 +237,6 @@ function loadConflicts() {
     .catch(function(err) { console.error('Conflict zones error:', err); });
 }
 
-// ─── Legend ─────────────────────────────────────────────────────
 const legend = L.control({ position: 'bottomright' });
 legend.onAdd = function() {
   const div = L.DomUtil.create('div', 'legend');
@@ -242,7 +252,7 @@ legend.onAdd = function() {
 };
 legend.addTo(map);
 
-// ─── Init ──────────────────────────────────────────────────────
+setStatus('CONNECTING...', '#22d3ee');
 loadMarkers();
 loadConflicts();
 startAircraftUpdates();
