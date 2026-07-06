@@ -120,6 +120,8 @@ app.get('/api/map/conflicts', async (req, res) => {
 
 // ─── Aviation Data (no auth, proxies OpenSky) ──────────────────
 let aviationCache = { data: null, time: 0 };
+const OPENSKY_USER = process.env.OPENSKY_USERNAME || '';
+const OPENSKY_PASS = process.env.OPENSKY_PASSWORD || '';
 const OPENSKY_URL = 'https://opensky-network.org/api/states/all';
 
 app.get('/api/map/aviation', async (req, res) => {
@@ -128,7 +130,12 @@ app.get('/api/map/aviation', async (req, res) => {
         return res.json(aviationCache.data);
     }
     try {
-        const resp = await fetch(OPENSKY_URL, { signal: AbortSignal.timeout(10000) });
+        const opts = { signal: AbortSignal.timeout(10000) };
+        if (OPENSKY_USER && OPENSKY_PASS) {
+            const b64 = Buffer.from(OPENSKY_USER + ':' + OPENSKY_PASS).toString('base64');
+            opts.headers = { 'Authorization': 'Basic ' + b64 };
+        }
+        const resp = await fetch(OPENSKY_URL, opts);
         const raw = await resp.json();
         const states = (raw.states || []).filter(s => s[5] && s[6]).map(s => ({
             icao24: s[0],
@@ -278,6 +285,7 @@ function start() {
         console.log(`  💾 DB: ${process.env.DB_PATH || './db/geoint.db'}`);
         console.log(`  📰 NewsAPI: ${process.env.NEWS_API_KEY ? '✅ configured' : '❌ not set'}`);
         console.log(`  🧠 Groq AI: ${process.env.GROQ_API_KEY ? '✅ configured' : '❌ not set (using fallback)'}`);
+        console.log(`  ✈️  OpenSky: ${OPENSKY_USER || OPENSKY_PASS ? '✅ configured' : '⚠️  anonymous (rate limited)'}`);
         console.log(`${'═'.repeat(55)}\n`);
 
         startScheduler();

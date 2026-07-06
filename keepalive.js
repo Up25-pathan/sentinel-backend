@@ -10,7 +10,7 @@ const https = require('https');
 const http = require('http');
 
 const TARGET_URL = process.env.HEARTBEAT_URL || 'https://sentinel-backend-oc7g.onrender.com/api/health';
-const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
 
 function ping() {
     const url = new URL(TARGET_URL);
