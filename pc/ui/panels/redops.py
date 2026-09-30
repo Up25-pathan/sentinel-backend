@@ -77,7 +77,6 @@ class RedOpsPanel(QWidget):
             ("WEB", self.start_web_job, "#f59e0b"),
             ("PRIVESC", self.start_privesc_job, "#ef4444"),
             ("OSINT", self.start_osint_job, "#22d3ee"),
-            ("EXPLOIT", self.start_exploit_job, "#ef4444"),
             ("WIFI", self.start_wifi_job, "#f59e0b"),
         ]
         for label, cb, color in jobs_def:
@@ -221,11 +220,6 @@ class RedOpsPanel(QWidget):
         domain, ok = QInputDialog.getText(self, 'OSINT Target', 'Enter Target Domain:')
         if ok and domain:
             self.start_generic_job("OSINT", "bin/osint_job.py", ["--domain", domain])
-
-    def start_exploit_job(self):
-        target, ok = QInputDialog.getText(self, 'Exploit Target', 'Enter Target IP:')
-        if ok and target:
-            self.start_generic_job("EXPLOIT DEV", "bin/exploit_dev_job.py", ["--target", target])
 
     def start_wifi_job(self):
         interface, ok = QInputDialog.getText(self, 'Wi-Fi Interface', 'Enter interface name (e.g., wlan0):')

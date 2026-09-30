@@ -3,7 +3,9 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdi
                              QComboBox, QProgressBar, QMenu, QFrame)
 from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QColor, QAction
-import random
+
+from utils import net_scanner
+from utils.background import run_in_background
 
 
 class NetworkScannerPanel(QWidget):
@@ -135,6 +137,10 @@ class NetworkScannerPanel(QWidget):
 
     SCAN_TYPES = ["Ping", "Port Scan", "Service Scan", "Full Scan"]
 
+    # Per-connection timeout in seconds. A filtered host therefore costs this
+    # much per port, so the full 25-port sweep stays responsive.
+    TIMEOUT = 1.5
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(self.STYLESHEET)
@@ -147,6 +153,10 @@ class NetworkScannerPanel(QWidget):
         self._scan_step = 0
         self._scan_rows = []
         self._scan_type = "Ping"
+        self._scan_target = ""
+        self._open_found = 0
+        # Held so a scan outliving the panel cannot deliver into deleted widgets.
+        self._scan_task = None
 
         self._setup_ui()
 
@@ -231,6 +241,9 @@ class NetworkScannerPanel(QWidget):
         self._scan_step = 0
         self._scan_rows = []
         self._scan_type = "Ping"
+        self._scan_target = ""
+        self._open_found = 0
+        self._scan_task = None
         self.results_table.setRowCount(0)
         self.progress_bar.setValue(0)
         self.status_label.setText("IDLE")
@@ -245,74 +258,57 @@ class NetworkScannerPanel(QWidget):
             return
 
         self._scan_type = self.scan_type_combo.currentText()
+        self._scan_target = target
         self.results_table.setRowCount(0)
         self._scan_progress = 0
         self._scan_step = 0
-        self._scan_rows = self._generate_results(target, self._scan_type)
+        self._scan_rows = []
+        self._open_found = 0
 
         self.scan_btn.setEnabled(False)
-        self.status_label.setText("SCANNING...")
+        self.status_label.setText(f"SCANNING {target}...")
         self.status_label.setStyleSheet(
             "color: #f59e0b; border-color: #f59e0b; background-color: #0d0f14;"
         )
         self.progress_bar.setValue(0)
+
+        # The probe runs on a worker: a full sweep is several seconds of real
+        # socket time, which would freeze the UI if done inline.
+        self._scan_task = run_in_background(
+            self._probe,
+            on_done=self._on_scan_done,
+            on_error=self._on_scan_error,
+            on_progress=self._on_scan_progress,
+        )
+
+    def _probe(self, progress=None):
+        # Worker thread: no widget access from here.
+        return net_scanner.run_scan(
+            self._scan_target, self._scan_type, timeout=self.TIMEOUT, progress=progress
+        )
+
+    def _on_scan_progress(self, part):
+        done, total = part
+        self.progress_bar.setValue(int(100 * done / total) if total else 0)
+        self.status_label.setText(f"SCANNING {self._scan_target}... {done}/{total}")
+
+    def _on_scan_done(self, rows):
+        self._scan_task = None
+        self._scan_rows = rows
+        self._scan_step = 0
+        open_ports = [r for r in rows if r["status"] == "OPEN"]
+        self._open_found = len(open_ports)
         self._scan_timer.start()
 
-    def _generate_results(self, target, scan_type):
-        rows = []
-        if scan_type == "Ping":
-            alive = random.random() > 0.25
-            rtt = round(random.uniform(1.5, 120.0), 1) if alive else None
-            status = "ALIVE" if alive else "TIMEOUT"
-            rtt_str = f"{rtt}ms" if rtt else "---"
-            rows.append((target, "Ping", "---", "---", status, rtt_str))
-
-        elif scan_type == "Port Scan":
-            ports = [22, 80, 443, 8080, 8443]
-            for port in ports:
-                status = random.choices(
-                    ["OPEN", "CLOSED", "FILTERED"], weights=[3, 5, 2]
-                )[0]
-                rtt = round(random.uniform(0.5, 45.0), 1) if status != "FILTERED" else None
-                rtt_str = f"{rtt}ms" if rtt else "---"
-                rows.append((target, "Port Scan", str(port), "---", status, rtt_str))
-
-        elif scan_type == "Service Scan":
-            services = {
-                22: "SSH",
-                80: "HTTP",
-                443: "HTTPS",
-                8080: "HTTP-Proxy",
-                8443: "HTTPS-Alt",
-                21: "FTP",
-                25: "SMTP",
-            }
-            selected = random.sample(list(services.items()), k=random.randint(4, 6))
-            for port, svc in sorted(selected):
-                status = random.choices(
-                    ["OPEN", "CLOSED", "FILTERED"], weights=[4, 4, 2]
-                )[0]
-                rtt = round(random.uniform(0.5, 45.0), 1) if status != "FILTERED" else None
-                rtt_str = f"{rtt}ms" if rtt else "---"
-                rows.append((target, "Service Scan", str(port), svc, status, rtt_str))
-
-        elif scan_type == "Full Scan":
-            all_ports = [
-                21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445,
-                993, 995, 1433, 1521, 2049, 3306, 3389, 5432, 5900, 6379,
-                8080, 8443, 27017,
-            ]
-            selected_ports = random.sample(all_ports, k=random.randint(12, 18))
-            for port in sorted(selected_ports):
-                status = random.choices(
-                    ["OPEN", "CLOSED", "FILTERED"], weights=[2, 6, 2]
-                )[0]
-                rtt = round(random.uniform(0.5, 45.0), 1) if status != "FILTERED" else None
-                rtt_str = f"{rtt}ms" if rtt else "---"
-                rows.append((target, "Full Scan", str(port), "---", status, rtt_str))
-
-        random.shuffle(rows)
-        return rows
+    def _on_scan_error(self, message):
+        self._scan_task = None
+        self._scan_timer.stop()
+        self.progress_bar.setValue(0)
+        self.scan_btn.setEnabled(True)
+        self.status_label.setText(f"SCAN FAILED: {message}")
+        self.status_label.setStyleSheet(
+            "color: #ef4444; border-color: #ef4444; background-color: #0d0f14;"
+        )
 
     def _tick(self):
         total_steps = max(len(self._scan_rows), 5)
@@ -338,10 +334,14 @@ class NetworkScannerPanel(QWidget):
             "CLOSED": "#475569",
             "FILTERED": "#f59e0b",
             "ALIVE": "#22d3ee",
-            "TIMEOUT": "#ef4444",
+            "NO REPLY": "#ef4444",
         }
 
-        for col, val in enumerate(row_data):
+        cells = [
+            row_data["target"], row_data["type"], row_data["port"],
+            row_data["service"], row_data["status"], row_data["rtt"],
+        ]
+        for col, val in enumerate(cells):
             item = QTableWidgetItem(str(val))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if col == 4:
@@ -354,10 +354,21 @@ class NetworkScannerPanel(QWidget):
     def _scan_finished(self):
         self._scan_timer.stop()
         self.progress_bar.setValue(100)
-        self.status_label.setText("COMPLETE")
-        self.status_label.setStyleSheet(
-            "color: #22d3ee; border-color: #22d3ee; background-color: #0d0f14;"
-        )
+
+        total = len(self._scan_rows)
+        if not total:
+            self.status_label.setText("COMPLETE - NO RESULTS")
+            self.status_label.setStyleSheet(
+                "color: #f59e0b; border-color: #f59e0b; background-color: #0d0f14;"
+            )
+        else:
+            # Report the measured outcome, including an honest zero.
+            self.status_label.setText(
+                f"COMPLETE - {self._open_found} OPEN / {total} PROBED"
+            )
+            self.status_label.setStyleSheet(
+                "color: #22d3ee; border-color: #22d3ee; background-color: #0d0f14;"
+            )
         self.scan_btn.setEnabled(True)
 
     def _show_context_menu(self, pos: QPoint):
