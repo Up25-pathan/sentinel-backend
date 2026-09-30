@@ -21,6 +21,9 @@ npm-debug.log*
 # Environment
 .env
 .env.local
+.jwt_secret
+db/.jwt_secret
+pc/db/.jwt_secret
 
 # OS
 .DS_Store
