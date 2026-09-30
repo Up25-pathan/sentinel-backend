@@ -147,6 +147,32 @@ CREATE INDEX IF NOT EXISTS idx_nexus_source ON nexus_links(source_id);
 CREATE INDEX IF NOT EXISTS idx_nexus_target ON nexus_links(target_id);
 CREATE INDEX IF NOT EXISTS idx_nexus_type ON nexus_links(link_type);
 
+-- ─── SHARED AUDIT LOG (across all clients) ──────────
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT DEFAULT (datetime('now')),
+    action TEXT NOT NULL,
+    details TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp DESC);
+
+-- ─── ASSETS REGISTRY (shared across all clients) ──────────
+
+CREATE TABLE IF NOT EXISTS assets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    value TEXT NOT NULL,
+    campaign TEXT DEFAULT 'None',
+    status TEXT DEFAULT 'ACTIVE',
+    notes TEXT,
+    created TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(type);
+
 -- ─── PREDICTIVE ENGINE (Second-Order Effects) ──────────
 
 CREATE TABLE IF NOT EXISTS predictions (

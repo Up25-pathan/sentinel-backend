@@ -4,6 +4,7 @@
  * and event frequency for visualization.
  */
 const { getDb } = require('../db');
+const { daysModifier, clampDays } = require('../lib/query');
 
 /**
  * Get risk trend data over time (daily aggregation)
@@ -24,10 +25,10 @@ function getRiskTrends(days = 30) {
                 WHEN 'MEDIUM' THEN 50 ELSE 25 END) as avg_risk_score,
             SUM(CASE WHEN is_breaking = 1 THEN 1 ELSE 0 END) as breaking_count
         FROM events
-        WHERE created_at > datetime('now', '-${parseInt(days)} days')
+        WHERE created_at > datetime('now', ?)
         GROUP BY date(created_at)
         ORDER BY date ASC
-    `).all();
+    `).all(daysModifier(days));
 
     return trends;
 }
@@ -44,10 +45,10 @@ function getCategoryTrends(days = 14) {
             category,
             COUNT(*) as count
         FROM events
-        WHERE created_at > datetime('now', '-${parseInt(days)} days')
+        WHERE created_at > datetime('now', ?)
         GROUP BY date(created_at), category
         ORDER BY date ASC, count DESC
-    `).all();
+    `).all(daysModifier(days));
 
     return trends;
 }
@@ -68,15 +69,31 @@ function getRegionalTrends(days = 14) {
             MAX(created_at) as latest_event,
             GROUP_CONCAT(DISTINCT category) as categories
         FROM events
-        WHERE created_at > datetime('now', '-${parseInt(days)} days')
+        WHERE created_at > datetime('now', ?)
             AND location_name IS NOT NULL
         GROUP BY location_name
         ORDER BY event_count DESC
         LIMIT 20
-    `).all();
+    `).all(daysModifier(days));
 
     return trends;
 }
+
+/**
+ * Credibility is a TEXT column constrained to HIGH/MEDIUM/LOW/UNKNOWN.
+ * AVG() over TEXT coerces every non-numeric value to 0, so this previously
+ * returned avg_credibility = 0 for every source regardless of the data
+ * (verified: 834 MEDIUM and 23 HIGH rows in the live database).
+ * Map the labels to an explicit numeric scale instead.
+ */
+const CREDIBILITY_SCORE = `
+    CASE s.credibility
+        WHEN 'HIGH'    THEN 1.0
+        WHEN 'MEDIUM'  THEN 0.6
+        WHEN 'LOW'     THEN 0.3
+        WHEN 'UNKNOWN' THEN 0.5
+        ELSE 0.5
+    END`;
 
 /**
  * Get source credibility stats
@@ -85,11 +102,12 @@ function getSourceCredibility() {
     const db = getDb();
 
     const sources = db.prepare(`
-        SELECT 
+        SELECT
             s.name,
             COUNT(*) as article_count,
-            AVG(s.credibility) as avg_credibility,
+            ROUND(AVG(${CREDIBILITY_SCORE}), 3) as avg_credibility,
             COUNT(DISTINCT s.event_id) as events_covered,
+            COUNT(DISTINCT s.url) as distinct_articles,
             MAX(s.published_at) as last_seen
         FROM sources s
         GROUP BY s.name

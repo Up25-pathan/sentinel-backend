@@ -1,12 +1,13 @@
 const express = require('express');
 const { getDb } = require('../db');
+const { clampInt } = require('../lib/query');
 const router = express.Router();
 
 // GET /api/darkweb — Get dark web intelligence feed
 router.get('/', (req, res) => {
     try {
         const db = getDb();
-        const limit = parseInt(req.query.limit) || 50;
+        const limit = clampInt(req.query.limit, { min: 1, max: 500, fallback: 50 });
         const category = req.query.category; // MALWARE, BOTNET_C2, RANSOMWARE, THREAT_INTEL, EXPOSED_INFRA
         const threatLevel = req.query.threat_level; // LOW, MEDIUM, HIGH, CRITICAL
 
@@ -32,10 +33,10 @@ router.get('/', (req, res) => {
 
         const items = db.prepare(query).all(...params);
 
-        // Parse tags JSON
+        // Parse tags JSON defensively — one malformed row should not 500 the feed.
         const parsed = items.map(item => ({
             ...item,
-            tags: item.tags ? JSON.parse(item.tags) : [],
+            tags: parseTags(item.tags),
         }));
 
         res.json({
@@ -87,5 +88,15 @@ router.get('/stats', (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
+function parseTags(tags) {
+    if (!tags) return [];
+    try {
+        const parsed = JSON.parse(tags);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
 
 module.exports = router;

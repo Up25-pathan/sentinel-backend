@@ -5,26 +5,43 @@
 const Groq = require('groq-sdk');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
-require('dotenv').config();
+const { isUnset } = require('../env');
 
 let groq = null;
+let warnedUnavailable = false;
+
 function getGroq() {
-    if (!groq && process.env.GROQ_API_KEY) {
+    if (!groq && !isUnset(process.env.GROQ_API_KEY)) {
         groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     }
     return groq;
 }
 
+/** True when a Groq key is present and usable. */
+function isConfigured() {
+    return !isUnset(process.env.GROQ_API_KEY);
+}
+
 /**
  * Generate predictions for a cluster of related events
- * @param {string} clusterId 
+ * @param {string} clusterId
  */
 async function generateClusterPredictions(clusterId) {
     const db = getDb();
     const client = getGroq();
 
     if (!client) {
-        console.warn('⚠️ Predictions: AI client not configured.');
+        // Previously this logged once per cluster per run. With 141 clusters on
+        // a 30-minute schedule that is ~6,700 identical lines a day, and it
+        // accounted for 2,020 of the 3,190 lines in the error log — burying
+        // every real failure. Now it warns once per process.
+        if (!warnedUnavailable) {
+            console.warn(
+                '⚠️ Predictions: GROQ_API_KEY not configured — prediction engine disabled. ' +
+                'Set GROQ_API_KEY to enable (see server/.env).'
+            );
+            warnedUnavailable = true;
+        }
         return;
     }
 
@@ -96,4 +113,4 @@ async function generateClusterPredictions(clusterId) {
     }
 }
 
-module.exports = { generateClusterPredictions };
+module.exports = { generateClusterPredictions, isConfigured };

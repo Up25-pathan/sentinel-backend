@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
+const crypto = require('crypto');
+const { resolveJwtSecret, isUnset } = require('../env');
 
 /**
  * Sanitize input — strip HTML tags and trim whitespace
@@ -7,6 +8,16 @@ require('dotenv').config();
 function sanitizeInput(str) {
     if (typeof str !== 'string') return str;
     return str.replace(/<[^>]*>/g, '').trim();
+}
+
+/**
+ * Constant-time string comparison, so a key cannot be recovered by timing.
+ */
+function safeEqual(a, b) {
+    const bufA = Buffer.from(String(a));
+    const bufB = Buffer.from(String(b));
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
 }
 
 /**
@@ -22,9 +33,9 @@ function apiKeyMiddleware(req, res, next) {
     const validKey = process.env.API_SECRET_KEY;
 
     // If no API_SECRET_KEY is configured, skip this check (backward compatible)
-    if (!validKey) return next();
+    if (isUnset(validKey)) return next();
 
-    if (!apiKey || apiKey !== validKey) {
+    if (!apiKey || !safeEqual(apiKey, validKey)) {
         return res.status(403).json({ error: 'Invalid API key' });
     }
     next();
@@ -53,9 +64,21 @@ function authMiddleware(req, res, next) {
         return res.status(401).json({ error: 'No token provided' });
     }
 
+    // resolveJwtSecret() throws at boot if unset (see env.js), so verification
+    // can never silently use a different key than signing did. Previously this
+    // read process.env.JWT_SECRET with no fallback while routes/auth.js signed
+    // with a fallback, which produced a total lockout on an unset secret.
+    let secret;
+    try {
+        secret = resolveJwtSecret();
+    } catch (err) {
+        console.error('Auth configuration error:', err.message);
+        return res.status(500).json({ error: 'Server auth not configured' });
+    }
+
     const token = authHeader.split(' ')[1];
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, secret);
         req.user = decoded;
         next();
     } catch (err) {

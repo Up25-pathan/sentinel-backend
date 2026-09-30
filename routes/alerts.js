@@ -1,12 +1,16 @@
 const express = require('express');
 const { getDb } = require('../db');
+const { clampInt } = require('../lib/query');
 const router = express.Router();
 
 // GET /api/alerts — Get alerts (recent/unread)
 router.get('/', (req, res) => {
     try {
         const db = getDb();
-        const { unread_only, limit = 50 } = req.query;
+        const { unread_only } = req.query;
+        // `parseInt(req.query.limit)` produced NaN for `?limit=abc`, and
+        // better-sqlite3 rejects a NaN bind with a 500.
+        const limit = clampInt(req.query.limit, { min: 1, max: 500, fallback: 50 });
 
         let query = 'SELECT a.*, e.title as event_title, e.category, e.risk_level, e.location_name FROM alerts a JOIN events e ON a.event_id = e.id';
         let params = [];
@@ -16,14 +20,15 @@ router.get('/', (req, res) => {
         }
 
         query += ' ORDER BY a.created_at DESC LIMIT ?';
-        params.push(parseInt(limit));
+        params.push(limit);
 
         const alerts = db.prepare(query).all(...params);
         const unreadCount = db.prepare('SELECT COUNT(*) as count FROM alerts WHERE is_read = 0').get();
 
         res.json({
             alerts,
-            unread_count: unreadCount.count
+            limit,
+            unread_count: unreadCount.count,
         });
     } catch (err) {
         console.error('Error fetching alerts:', err);
