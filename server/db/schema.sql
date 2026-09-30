@@ -190,3 +190,41 @@ CREATE TABLE IF NOT EXISTS predictions (
 CREATE INDEX IF NOT EXISTS idx_predictions_event ON predictions(event_id);
 CREATE INDEX IF NOT EXISTS idx_predictions_cluster ON predictions(cluster_id);
 
+-- ===== VULNERABILITY INTELLIGENCE (NVD CVE + CISA KEV) =====
+-- Backed entirely by real upstream feeds. There is no seeded or demo data: if
+-- both feeds fail, the table is simply empty and the client is told so.
+--   cve_id          CVE / CNA identifier (primary key)
+--   cvss_score      NVD base score, 0-10
+--   severity        Derived from cvss_score, not from the feed's label
+--   exploit_status  'Weaponized' if in CISA KEV, else 'No Known Exploit'
+--   vendor/product  From the NVD 2.0 affected[].affectedData[] block, falling
+--                   back to the CPE match, then to the KEV vendor fields
+CREATE TABLE IF NOT EXISTS vulnerabilities (
+    cve_id TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    cvss_score REAL,
+    severity TEXT CHECK(severity IN ('CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN')),
+    cvss_vector TEXT,
+    vendor TEXT,
+    product TEXT,
+    affected_versions TEXT,
+    cwes TEXT,
+    references_json TEXT,
+    exploit_status TEXT NOT NULL DEFAULT 'No Known Exploit',
+    in_kev INTEGER NOT NULL DEFAULT 0,
+    ransomware_use TEXT,
+    kev_date_added TEXT,
+    kev_due_date TEXT,
+    required_action TEXT,
+    vuln_status TEXT,
+    published TEXT,
+    modified TEXT,
+    nvd_fetched_at TEXT,
+    kev_fetched_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_vulns_severity ON vulnerabilities(severity);
+CREATE INDEX IF NOT EXISTS idx_vulns_published ON vulnerabilities(published DESC);
+CREATE INDEX IF NOT EXISTS idx_vulns_kev ON vulnerabilities(in_kev, cvss_score DESC);
+CREATE INDEX IF NOT EXISTS idx_vulns_score ON vulnerabilities(cvss_score DESC);
+

@@ -1,10 +1,109 @@
 const express = require('express');
 const { getDb } = require('../db');
-const { clampInt, clampDays, pick } = require('../lib/query');
+const { clampInt, clampDays, pick, paginate } = require('../lib/query');
 const { chat } = require('../services/ai-chat');
 const { getLatestDailyBriefing } = require('../services/daily-briefing');
 const { getRiskTrends, getCategoryTrends, getRegionalTrends, getSourceCredibility, getIntelSummary } = require('../services/trend-analysis');
+const { vulnStats, syncVulnerabilities } = require('../services/vulnerabilities');
+const { logAction } = require('../services/audit-log');
 const router = express.Router();
+
+// GET /api/intelligence/vulns
+//   ?severity=CRITICAL|HIGH|MEDIUM|LOW   ?kev=1
+//   ?days=N   ?q=<text>   ?sort=cvss|published   ?page=&limit=
+//
+// Real vulnerability data from NVD CVE + CISA KEV. The client used to call this
+// endpoint, which did not exist, and fell back to a hardcoded list of 15 fake
+// CVEs whenever the request failed — so it fabricated data on every run.
+router.get('/vulns', (req, res) => {
+    try {
+        const db = getDb();
+        const { limit, page, offset } = paginate(req.query, { defaultLimit: 50, maxLimit: 200 });
+
+        const conditions = [];
+        const params = [];
+
+        const severity = String(req.query.severity || '').trim().toUpperCase();
+        if (severity && severity !== 'ALL') {
+            if (!['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'].includes(severity)) {
+                return res.status(400).json({ error: 'Unknown severity' });
+            }
+            conditions.push('severity = ?');
+            params.push(severity);
+        }
+
+        if (req.query.kev === '1' || req.query.kev === 'true') {
+            conditions.push('in_kev = 1');
+        }
+
+        const days = clampDays(req.query.days, { min: 1, max: 3650, fallback: 0 });
+        if (days > 0) {
+            conditions.push("published > datetime('now', ?)");
+            params.push(`-${days} days`);
+        }
+
+        const q = String(req.query.q || '').trim();
+        if (q) {
+            conditions.push('(cve_id LIKE ? OR description LIKE ? OR vendor LIKE ? OR product LIKE ? OR cwes LIKE ?)');
+            const like = `%${q}%`;
+            params.push(like, like, like, like, like);
+        }
+
+        const sort = pick(String(req.query.sort || 'cvss').toLowerCase(), ['cvss', 'published', 'cve', 'kev'], 'cvss');
+        const orderBy = sort === 'published'
+            ? 'published DESC'
+            : sort === 'cve'
+                ? 'cve_id ASC'
+                : sort === 'kev'
+                    ? 'in_kev DESC, kev_date_added DESC'
+                    // Default. CISA KEV entries are confirmed exploited in the
+                    // wild, which outranks a higher CVSS score on a CVE nobody is
+                    // known to be using. KEV rows are also the ones still missing
+                    // a score, so ordering by CVSS alone buried all 1,729 of them
+                    // below every rated row and reported zero CRITICAL findings.
+                    : 'in_kev DESC, cvss_score IS NULL ASC, cvss_score DESC, published DESC';
+
+        const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+        const total = db.prepare(`SELECT COUNT(*) AS n FROM vulnerabilities ${where}`).get().n;
+        const rows = db.prepare(`
+            SELECT cve_id, description, cvss_score, severity, cvss_vector,
+                   vendor, product, affected_versions, cwes, references_json,
+                   exploit_status, in_kev, ransomware_use, kev_date_added, kev_due_date,
+                   required_action, vuln_status, published, modified
+            FROM vulnerabilities
+            ${where}
+            ORDER BY ${orderBy}
+            LIMIT ? OFFSET ?
+        `).all(...params, limit, offset);
+
+        // Pre-compute stats over the whole table, not the page, so the client's
+        // filter chips stay stable while paging.
+        res.json({
+            vulns: rows,
+            total,
+            page,
+            limit,
+            has_more: offset + rows.length < total,
+            stats: vulnStats(),
+        });
+    } catch (err) {
+        console.error('Vulns list error:', err);
+        res.status(500).json({ error: 'Failed to load vulnerabilities' });
+    }
+});
+
+// POST /api/intelligence/vulns/sync — force an immediate upstream refresh
+router.post('/vulns/sync', async (req, res) => {
+    try {
+        const result = await syncVulnerabilities();
+        logAction('VULN_SYNC', `NVD ${result.nvd} CVEs, KEV ${result.kev} entries`);
+        res.json({ success: true, ...result, stats: vulnStats() });
+    } catch (err) {
+        console.error('Vuln sync error:', err);
+        res.status(500).json({ error: 'Vulnerability sync failed' });
+    }
+});
 
 // GET /api/intelligence/macro — Global AI briefing
 router.get('/macro', (req, res) => {
@@ -332,6 +431,30 @@ router.get('/dashboard', (req, res) => {
         // Data sources (count distinct source names)
         const activeSources = db.prepare('SELECT COUNT(DISTINCT name) as count FROM sources').get().count;
 
+        // Dark web — the dashboard shows a signal count, so it needs the real one
+        // rather than a number invented on the client.
+        const darkWeb = db.prepare(`
+            SELECT COUNT(*) as total,
+                   SUM(CASE WHEN threat_level = 'CRITICAL' THEN 1 ELSE 0 END) as critical,
+                   SUM(CASE WHEN discovered_at > datetime('now', '-24 hours') THEN 1 ELSE 0 END) as last_24h
+            FROM dark_web_intel
+        `).get();
+
+        // Briefings generated so far today, for the "briefings" KPI.
+        const briefings = db.prepare(`
+            SELECT COUNT(*) as count FROM global_briefings
+            WHERE created_at > datetime('now', 'start of day')
+        `).get().count;
+
+        // Count of events that actually carry a written brief. The dashboard used
+        // to display a hardcoded "9" for this regardless of what was in the DB.
+        const intelReports = db.prepare(`
+            SELECT COUNT(*) as count FROM events WHERE ai_brief IS NOT NULL AND ai_brief != ''
+        `).get().count;
+
+        // Vulnerability intelligence (NVD + CISA KEV)
+        const vulns = vulnStats();
+
         // Risk trend (last 7 days)
         const riskTrend = db.prepare(`
             SELECT 
@@ -347,6 +470,18 @@ router.get('/dashboard', (req, res) => {
             ORDER BY date ASC
         `).all();
 
+        // Recent high-risk events feed the dashboard's crisis tracker. Previously
+        // the client showed eight invented headlines on this panel at all times.
+        const topThreats = db.prepare(`
+            SELECT id, title, category, risk_level, country, created_at
+            FROM events
+            WHERE risk_level IN ('CRITICAL', 'HIGH')
+            ORDER BY
+                CASE risk_level WHEN 'CRITICAL' THEN 0 ELSE 1 END ASC,
+                created_at DESC
+            LIMIT 8
+        `).all();
+
         res.json({
             overview: {
                 total_events: totalEvents,
@@ -360,10 +495,18 @@ router.get('/dashboard', (req, res) => {
                 total_entities: totalEntities,
                 total_nexus_links: totalLinks,
                 active_sources: activeSources,
+                briefings_today: briefings,
+                ai_summaries: intelReports,
+                dark_web_signals: darkWeb?.total || 0,
+                dark_web_critical: darkWeb?.critical || 0,
+                dark_web_last_24h: darkWeb?.last_24h || 0,
+                active_threats: criticalEvents + highEvents,
             },
+            vulnerabilities: vulns,
             category_distribution: categoryDist,
             top_countries: topCountries,
             risk_trend: riskTrend,
+            top_threats: topThreats,
         });
     } catch (err) {
         console.error('Dashboard error:', err);

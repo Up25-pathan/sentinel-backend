@@ -15,6 +15,7 @@ const { generateDailyBriefing } = require('../services/daily-briefing');
 const { scrapeDarkWeb } = require('../services/dark-web-scraper');
 const { generateClusterPredictions, isConfigured: isAiConfigured } = require('../services/prediction-engine');
 const { track } = require('../services/source-health');
+const { syncVulnerabilities } = require('../services/vulnerabilities');
 
 /**
  * Job overlap guard.
@@ -133,11 +134,28 @@ function startScheduler() {
         }
     }));
 
+    // ─── Vulnerability intelligence (NVD + CISA KEV) — daily ──
+    // NVD is rate limited (5 req / 30 s without a key) and the sync walks pages
+    // with a deliberate delay, so this must not run more often than daily.
+    cron.schedule('23 3 * * *', guard('vulns', async () => {
+        await syncVulnerabilities();
+    }));
+
+    // ─── Vulnerability sync on boot ────────────────────────────
+    // Deferred 45s so it never competes with the initial ingestion burst. The
+    // vulnerability panel used to render 15 invented CVEs because no real feed
+    // was ever fetched; without this it is empty until 03:23 UTC.
+    setTimeout(() => {
+        syncVulnerabilities().catch(err =>
+            console.error('❌ Initial vulnerability sync error:', err.message));
+    }, 45000);
+
     console.log('  📰 RSS News ingestion:     every 15 minutes');
     console.log('  📱 OSINT (TG, X, Reddit):  every 5 minutes');
     console.log('  ⚡ Local NLP analysis:     every 5 minutes (FREE)');
     console.log('  🌍 Data-Driven Briefing:   every 60 minutes (FREE)');
     console.log('  🔗 Event clustering:       every 30 minutes');
+    console.log('  🛡️  NVD + CISA KEV vulns:  daily 03:23 UTC (on boot)');
     console.log('  📋 Daily Briefing:         6 AM + 6 PM UTC');
     console.log('  🧠 AI Enhancement:         budget-limited (auto)\n');
 }
