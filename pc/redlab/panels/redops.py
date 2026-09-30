@@ -1,3 +1,4 @@
+import os
 from functools import partial
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTabWidget,
@@ -6,11 +7,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
-from utils.workers import JobRunner
+from redlab.utils.workers import JobRunner
 from utils.background import run_in_background
-from utils import docker_tools, vm_tools, audit
+from redlab.utils import docker_tools, vm_tools
+from utils import audit
 import sys
 from datetime import datetime
+
+# REDLAB ships its own job scripts. Resolved against this file rather than the
+# working directory so the paths hold from source, a bundle, or an install.
+REDLAB_BIN_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin")
 
 JOB_HISTORY = []
 
@@ -161,7 +168,14 @@ class RedOpsPanel(QWidget):
         self._update_vms()
         return tab
 
-    def start_generic_job(self, name, script_path, args=None):
+    def start_generic_job(self, name, script_name, args=None):
+        """Run a REDLAB job script by name from this package's bin/ directory."""
+        script_path = os.path.join(REDLAB_BIN_DIR, script_name)
+        if not os.path.exists(script_path):
+            self.job_output.append(
+                f"  [ERROR] job script missing: {script_path}\n"
+                f"          '{name}' was not started and no result is shown for it.\n")
+            return
         if args is None:
             args = []
         self.job_counter += 1
@@ -204,27 +218,27 @@ class RedOpsPanel(QWidget):
     def start_recon_job(self):
         target, ok = QInputDialog.getText(self, 'Recon Target', 'Enter Target IP/Domain:')
         if ok and target:
-            self.start_generic_job("RECON", "bin/recon_job.py", ["--target", target])
+            self.start_generic_job("RECON", "recon_job.py", ["--target", target])
 
     def start_web_job(self):
         url, ok = QInputDialog.getText(self, 'Web Attack Target', 'Enter Target URL:')
         if ok and url:
-            self.start_generic_job("WEB", "bin/web_job.py", ["--url", url])
+            self.start_generic_job("WEB", "web_job.py", ["--url", url])
 
     def start_privesc_job(self):
         target, ok = QInputDialog.getText(self, 'Privesc Target', 'Enter Target IP:')
         if ok and target:
-            self.start_generic_job("PRIVESC", "bin/privesc_job.py", ["--target", target])
+            self.start_generic_job("PRIVESC", "privesc_job.py", ["--target", target])
 
     def start_osint_job(self):
         domain, ok = QInputDialog.getText(self, 'OSINT Target', 'Enter Target Domain:')
         if ok and domain:
-            self.start_generic_job("OSINT", "bin/osint_job.py", ["--domain", domain])
+            self.start_generic_job("OSINT", "osint_job.py", ["--domain", domain])
 
     def start_wifi_job(self):
         interface, ok = QInputDialog.getText(self, 'Wi-Fi Interface', 'Enter interface name (e.g., wlan0):')
         if ok and interface:
-            self.start_generic_job("WIFI", "bin/wifi_job.py", ["--interface", interface])
+            self.start_generic_job("WIFI", "wifi_job.py", ["--interface", interface])
 
     def _update_history(self):
         self.history_table.setRowCount(0)

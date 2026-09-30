@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdi
 from PyQt6.QtCore import Qt, QTimer, QPoint
 from PyQt6.QtGui import QColor, QAction
 
-from utils import net_scanner
+from redlab.utils import net_scanner
 from utils.background import run_in_background
 
 

@@ -23,7 +23,8 @@ from collections import defaultdict
 # Resolved against this file, not the working directory. DATA_DIR used to be the
 # bare relative string "db", so launching the app from anywhere other than pc/
 # silently created a second cache directory and re-downloaded 45.7 MB.
-_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# redlab/utils/attack_manager.py -> redlab/ -> pc/
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(_APP_ROOT, "db")
 
 ATTACK_JSON_PATH = os.path.join(DATA_DIR, "enterprise-attack.json")

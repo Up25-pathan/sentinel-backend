@@ -6,7 +6,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
-from utils import campaign_manager, attack_manager, audit
+from redlab.utils import campaign_manager, attack_manager
+from utils import audit
 from utils.background import run_in_background
 
 PHASE_COLORS = {

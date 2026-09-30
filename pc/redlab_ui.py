@@ -1,360 +1,205 @@
-import sys
+"""SENTINEL CIC — intelligence and reporting console.
+
+The reporting half of SENTINEL. CIC observes feeds, events and infrastructure
+state and renders what the backend actually returns; it does not act against
+targets. Offensive tooling lives in the separate REDLAB app.
+
+Run it with:  python redlab_ui.py
+"""
+
 import os
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QStackedWidget, QLabel, QProgressBar, QSystemTrayIcon, QMenu, QDialog
-)
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
-from PyQt6.QtCore import QUrl
-from PyQt6.QtGui import QIcon
-from ui.sidebar import Sidebar
+import sys
+
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PyQt6.QtWidgets import QApplication, QDialog, QLabel, QVBoxLayout, QWidget
+
+import app_meta
+from shell import ShellWindow, excepthook
+from ui.panels.ai_chat import AIChatPanel
+from ui.panels.alerts import AlertsPanel
+from ui.panels.audit_log import AuditLogPanel
 from ui.panels.dashboard import DashboardPanel
+from ui.panels.darkweb import DarkWebPanel
 from ui.panels.intel_events import IntelEventsPanel
 from ui.panels.osint_feed import OSINTFeedPanel
-from ui.panels.darkweb import DarkWebPanel
-from ui.panels.alerts import AlertsPanel
-from ui.panels.geopolitical_map import GeopoliticalMapPanel
-from ui.panels.ai_chat import AIChatPanel
 from ui.panels.reports import ReportsPanel
-from ui.panels.redops import RedOpsPanel
-from ui.panels.campaigns import CampaignsPanel
-from ui.panels.audit_log import AuditLogPanel
 from ui.panels.threat_feeds import ThreatFeedsPanel
 from ui.panels.timeline_view import TimelinePanel
-from ui.panels.network_scanner import NetworkScannerPanel
 from ui.panels.vuln_db import VulnDBPanel
-from ui.panels.assets import AssetsPanel
-from utils import audit, system_monitor
-from utils.api_client import ApiClient
+from utils import audit
+from utils.api_client import ApiClient, SERVER_URL
 
-class MainWindow(QMainWindow):
+
+class CicWindow(ShellWindow):
     def __init__(self):
-        super().__init__()
-        self.setWindowTitle("SENTINEL CIC — v2.1")
-        self.setGeometry(80, 40, 1800, 960)
-        self.setMinimumSize(1400, 800)
-        self._load_stylesheet()
-        audit.log_action("GUI_START", "Sentinel CIC v2.1 Initialized")
-
-        self.api_client = ApiClient()
-        try:
-            self._setup_tray()
-            self._setup_ui()
-            self._setup_monitor()
-            self._connect_signals()
-            self._auto_login()
-            # notifications disabled
-        except Exception as e:
-            print(f"Init error: {e}")
-            import traceback
-            traceback.print_exc()
-
-    def _load_stylesheet(self):
-        base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
-        qss_path = os.path.join(base, "ui", "style.qss")
-        if not os.path.exists(qss_path):
-            qss_path = os.path.join(os.path.dirname(base), "ui", "style.qss")
-        try:
-            with open(qss_path, "r", encoding="utf-8") as f:
-                self.setStyleSheet(f.read())
-        except FileNotFoundError:
-            print(f"Warning: style.qss not found at {qss_path}")
-
-    def _setup_tray(self):
-        self.tray = QSystemTrayIcon(self)
-        self.tray.setToolTip("SENTINEL CIC")
-        tray_menu = QMenu()
-        show_action = tray_menu.addAction("Show Window")
-        show_action.triggered.connect(self.show)
-        quit_action = tray_menu.addAction("Quit")
-        quit_action.triggered.connect(QApplication.quit)
-        self.tray.setContextMenu(tray_menu)
-        self.tray.activated.connect(self._on_tray_activate)
-        # Fallback icon — a small colored pixmap since we have no .ico
-        icon = QIcon()
-        pix = icon.pixmap(16, 16)
-        if pix.isNull():
-            from PyQt6.QtGui import QPixmap, QPainter, QColor
-            p = QPixmap(16, 16)
-            p.fill(QColor(245, 158, 11))
-            icon = QIcon(p)
-        self.tray.setIcon(icon)
-        self.tray.show()
-        # notifications disabled
-        self._health_nam = QNetworkAccessManager(self)
+        super().__init__(
+            title=app_meta.__app_name__,
+            version=app_meta.__version__,
+            nav_items=app_meta.__nav_items__,
+            nav_title="CIC",
+            subtitle="INTEL",
+            client_factory=ApiClient,
+        )
+        audit.log_action("GUI_START", f"{app_meta.__app_name__} v{app_meta.__version__}")
+        self._health_nam = None
         self._health_reply = None
+        self._wire_client()
+        self.on_startup()
 
-    def _on_tray_activate(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            self.show()
-            self.raise_()
-            self.activateWindow()
-
-    # notifications disabled
-
-    def _setup_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        main = QVBoxLayout(central)
-        main.setContentsMargins(0, 0, 0, 0)
-        main.setSpacing(0)
-
-        self._build_header(main)
-
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-
-        self.sidebar = Sidebar()
-        body.addWidget(self.sidebar)
-
-        self.content = QStackedWidget()
-        self.content.setObjectName("ContentArea")
-        self._build_panels()
-        body.addWidget(self.content, 1)
-        main.addLayout(body, 1)
-
-        self._build_status(main)
-
-    def _build_header(self, parent):
-        h = QWidget()
-        h.setObjectName("HeaderBar")
-        h.setFixedHeight(36)
-        l = QHBoxLayout(h)
-        l.setContentsMargins(8, 0, 8, 0)
-        l.setSpacing(12)
-
-        title = QLabel("SENTINEL CIC")
-        title.setObjectName("HeaderTitle")
-        l.addWidget(title)
-
-        sep = QLabel("|")
-        sep.setStyleSheet("color: #1e293b;")
-        l.addWidget(sep)
-
-        from utils.api_client import SERVER_URL as SRV
-        self.conn_label = QLabel(f"SRV: \u26AA {SRV.replace('https://','').replace('http://','')}")
-        self.conn_label.setStyleSheet("color: #475569; font-size: 8pt; letter-spacing: 1px;")
-        l.addWidget(self.conn_label)
-
-        self.sse_label = QLabel("")
-        self.sse_label.setStyleSheet("color: #475569; font-size: 7pt;")
-        l.addWidget(self.sse_label)
-
-        l.addStretch()
-
-        cpu_l = QLabel("CPU")
-        self.cpu_bar = QProgressBar()
-        self.cpu_bar.setFixedWidth(80)
-        self.cpu_bar.setStyleSheet("QProgressBar::chunk { background-color: #22d3ee; }")
-        mem_l = QLabel("MEM")
-        self.mem_bar = QProgressBar()
-        self.mem_bar.setFixedWidth(80)
-        self.mem_bar.setStyleSheet("QProgressBar::chunk { background-color: #f59e0b; }")
-
-        l.addWidget(cpu_l)
-        l.addWidget(self.cpu_bar)
-        l.addWidget(mem_l)
-        l.addWidget(self.mem_bar)
-
-        self.clock_label = QLabel("")
-        self.clock_label.setStyleSheet("color: #475569; font-size: 8pt; letter-spacing: 1px;")
-        l.addWidget(self.clock_label)
-
-        parent.addWidget(h)
-
-        self._update_clock()
-        self.clock_timer = QTimer(self)
-        self.clock_timer.timeout.connect(self._update_clock)
-        self.clock_timer.start(1000)
-
-    def _update_clock(self):
-        from datetime import datetime
-        self.clock_label.setText(datetime.now().strftime("%H:%M:%S UTC"))
-
-    def _build_panels(self):
-        self.panels = {}
-        self.panels["dashboard"] = DashboardPanel(self.api_client)
-        self.panels["intel"] = IntelEventsPanel(self.api_client)
-        self.panels["osint"] = OSINTFeedPanel(self.api_client)
-        self.panels["darkweb"] = DarkWebPanel(self.api_client)
-        self.panels["alerts"] = AlertsPanel(self.api_client)
-        try:
-            self.panels["map"] = GeopoliticalMapPanel(self.api_client)
-        except Exception as e:
-            print(f"Map panel init error: {e}")
-            from PyQt6.QtWidgets import QLabel
-            w = QWidget()
-            l = QVBoxLayout(w)
-            l.addWidget(QLabel(f"Map panel unavailable: {e}"))
-            self.panels["map"] = w
-        self.panels["chat"] = AIChatPanel(self.api_client)
-        self.panels["export"] = ReportsPanel(self.api_client)
-        self.panels["redops"] = RedOpsPanel()
-        self.panels["campaign"] = CampaignsPanel()
-        self.panels["audit"] = AuditLogPanel()
-        self.panels["feeds"] = ThreatFeedsPanel(self.api_client)
-        self.panels["timeline"] = TimelinePanel(self.api_client)
-        self.panels["scanner"] = NetworkScannerPanel()
-        self.panels["vulndb"] = VulnDBPanel(self.api_client)
-        self.panels["assets"] = AssetsPanel()
-
-        self.panel_keys = ["dashboard", "intel", "osint", "darkweb", "alerts", "map", "chat", "feeds", "timeline", "scanner", "vulndb", "assets", "export", "redops", "campaign", "audit"]
+    def build_panels(self):
+        client = self.api_client
+        self.panels = {
+            "dashboard": DashboardPanel(client),
+            "intel": IntelEventsPanel(client),
+            "osint": OSINTFeedPanel(client),
+            "darkweb": DarkWebPanel(client),
+            "alerts": AlertsPanel(client),
+            "chat": AIChatPanel(client),
+            "feeds": ThreatFeedsPanel(client),
+            "timeline": TimelinePanel(client),
+            "vulndb": VulnDBPanel(client),
+            "export": ReportsPanel(client),
+            "audit": AuditLogPanel(),
+        }
+        # The map is WebEngine-backed. On a host without a usable GPU or
+        # display it can abort the process, so a failure here must degrade to a
+        # placeholder rather than take the app down with it.
+        self.panels["map"] = self._build_map(client)
+        self.panel_keys = list(app_meta.__panel_keys__)
         for key in self.panel_keys:
             self.content.addWidget(self.panels[key])
 
-    def _build_status(self, parent):
-        s = QWidget()
-        s.setObjectName("StatusBar")
-        s.setFixedHeight(24)
-        l = QHBoxLayout(s)
-        l.setContentsMargins(8, 0, 8, 0)
-        l.setSpacing(12)
-        self.status_label = QLabel("STANDBY")
-        self.status_label.setStyleSheet("color: #475569; font-size: 7pt; letter-spacing: 1px;")
-        l.addWidget(self.status_label)
-        l.addStretch()
-        ver = QLabel("v2.1.0 — CIC BUILD")
-        ver.setStyleSheet("color: #1e293b; font-size: 7pt;")
-        l.addWidget(ver)
-        parent.addWidget(s)
-
-    def _setup_monitor(self):
-        self.monitor_timer = QTimer(self)
-        self.monitor_timer.timeout.connect(self._update_stats)
-        self.monitor_timer.start(3000)
-
-    def _update_stats(self):
+    def _build_map(self, client):
+        # QtWebEngine aborts the process on hosts with no usable GPU/display, and
+        # a native abort cannot be caught by try/except. SENTINEL_DISABLE_WEBENGINE
+        # lets a headless host (CI, a container, a remote shell) run the rest of
+        # the app instead of dying at startup.
+        if os.environ.get("SENTINEL_DISABLE_WEBENGINE"):
+            return self._map_placeholder("disabled by SENTINEL_DISABLE_WEBENGINE")
         try:
-            cpu = system_monitor.get_cpu_usage()
-            mem = system_monitor.get_memory_usage()
-            self.cpu_bar.setValue(int(cpu))
-            self.mem_bar.setValue(int(mem))
-        except:
-            pass
+            from ui.panels.geopolitical_map import GeopoliticalMapPanel
+            return GeopoliticalMapPanel(client)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Map panel unavailable: {exc}")
+            return self._map_placeholder(str(exc))
 
-    def _connect_signals(self):
-        self.sidebar.navigationChanged.connect(self._on_nav)
+    @staticmethod
+    def _map_placeholder(reason):
+        placeholder = QWidget()
+        layout = QVBoxLayout(placeholder)
+        layout.setContentsMargins(24, 24, 24, 24)
+        heading = QLabel("MAP UNAVAILABLE")
+        heading.setStyleSheet("color: #f59e0b; font-size: 11pt; font-weight: 700;")
+        detail = QLabel(
+            "The map view needs QtWebEngine, which could not start on this host.\n"
+            "Every other section is unaffected.\n\n"
+            f"Reason: {reason}")
+        detail.setStyleSheet("color: #475569; font-size: 9pt;")
+        detail.setWordWrap(True)
+        layout.addWidget(heading)
+        layout.addWidget(detail)
+        layout.addStretch()
+        return placeholder
+
+    def _wire_client(self):
         self.api_client.loginResult.connect(self._on_login)
         self.api_client.errorOccurred.connect(self._on_err)
         self.api_client.sseEvent.connect(self._on_sse_event)
         self.api_client.sseStatusChanged.connect(self._on_sse_status)
+
+    def on_startup(self):
+        self.set_connection(False, "checking")
         self._health_timer = QTimer(self)
         self._health_timer.timeout.connect(self._check_server)
         self._health_timer.start(30000)
+        QTimer.singleShot(300, self._check_server)
+        QTimer.singleShot(500, self._show_login)
 
-    def _on_nav(self, key):
-        if key in self.panels:
-            self.content.setCurrentWidget(self.panels[key])
-            self.status_label.setText(f"SECTION: {key.upper()}")
-            if hasattr(self.panels[key], 'refresh'):
-                self.panels[key].refresh()
+    def on_login(self, ok, message):
+        pass
 
+    # ── connection state ────────────────────────────────────────────
     def _on_login(self, ok, msg):
-        from utils.api_client import SERVER_URL as SRV
-        short = SRV.replace('https://','').replace('http://','')
+        self.set_connection(ok, "" if ok else msg)
         if ok:
-            self.conn_label.setText(f"\u25CF {short}")
-            self.conn_label.setStyleSheet("color: #22d3ee; font-size: 8pt; letter-spacing: 1px;")
-            self.status_label.setText("ALL SYSTEMS ONLINE")
+            self._set_status("ALL SYSTEMS ONLINE")
             QTimer.singleShot(1000, self._start_sse)
         else:
-            self.conn_label.setText(f"\u25CF {short}")
-            self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
-            if "refused" in msg.lower() or "unreachable" in msg.lower() or "timed out" in msg.lower() or "connection" in msg.lower():
-                self.status_label.setText("SERVER OFFLINE — CHECK RENDER")
+            low = msg.lower()
+            if any(word in low for word in ("refused", "unreachable", "timed out", "connection")):
+                self._set_status("SERVER OFFLINE — CHECK DEPLOY", error=True)
                 self.sse_label.setText("")
             else:
-                self.status_label.setText(f"AUTH FAILED — {msg[:40]}")
+                self._set_status(f"AUTH FAILED — {msg[:40]}", error=True)
                 self.sse_label.setText("CHECK SERVER LOGS")
 
     def _on_err(self, msg):
-        from utils.api_client import SERVER_URL as SRV
-        short = SRV.replace('https://','').replace('http://','')
         if "Connection refused" in msg or "Host unreachable" in msg:
-            self.conn_label.setText(f"\u25CF {short}")
-            self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
+            self.set_connection(False, "unreachable")
 
     def _start_sse(self):
         try:
             self.api_client.connect_sse()
             self.sse_label.setText("SSE: CONNECTING")
-        except Exception as e:
-            print(f"SSE start error: {e}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"SSE start error: {exc}")
 
     def _on_sse_status(self, live):
-        if live:
-            self.sse_label.setText("SSE: \u25CF LIVE")
-            self.sse_label.setStyleSheet("color: #22d3ee; font-size: 7pt;")
-        else:
-            self.sse_label.setText("SSE: \u25CB RECONNECT")
-            self.sse_label.setStyleSheet("color: #f59e0b; font-size: 7pt;")
+        self.sse_label.setText("SSE: ● LIVE" if live else "SSE: ○ RECONNECT")
+        self.sse_label.setStyleSheet(
+            f"color: {'#22d3ee' if live else '#f59e0b'}; font-size: 7pt;")
 
     def _on_sse_event(self, event_type, data):
-        try:
-            if event_type == "connected":
-                return
-            # notifications disabled
-        except Exception as e:
-            print(f"SSE event error: {e}")
+        if event_type != "connected":
+            self._set_status(f"EVENT: {event_type}")
 
-    def _auto_login(self):
-        QTimer.singleShot(500, self._show_login)
+    def _check_server(self):
+        if self._health_nam is None:
+            self._health_nam = QNetworkAccessManager(self)
+        self._health_reply = self._health_nam.get(QNetworkRequest(QUrl(f"{SERVER_URL}/api/health")))
+
+        def done():
+            reply = self._health_reply
+            self._health_reply = None
+            if reply is None:
+                return
+            try:
+                if reply.error() == QNetworkReply.NetworkError.NoError:
+                    self.set_connection(True)
+                    if self.api_client.is_authenticated():
+                        self._set_status("ALL SYSTEMS ONLINE")
+                else:
+                    self.set_connection(False, reply.errorString()[:28])
+                    self._set_status(f"SRV OFFLINE — {reply.errorString()[:40]}", error=True)
+            finally:
+                reply.deleteLater()
+
+        self._health_reply.finished.connect(done)
 
     def _show_login(self):
         from ui.login_dialog import LoginDialog
-        dlg = LoginDialog()
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.api_client.token = dlg.token
+        dialog = LoginDialog()
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.api_client.token = dialog.token
             self._on_login(True, "Authenticated")
         else:
             QApplication.quit()
 
-    def _check_server(self):
-        from utils.api_client import SERVER_URL as SRV
-        short = SRV.replace('https://','').replace('http://','')
-        url = QUrl(f"{SRV}/api/health")
-        req = QNetworkRequest(url)
-        self._health_reply = self._health_nam.get(req)
-        def on_health():
-            try:
-                if self._health_reply and self._health_reply.error() == QNetworkReply.NetworkError.NoError:
-                    self.conn_label.setText(f"\u25CF {short}")
-                    self.conn_label.setStyleSheet("color: #22d3ee; font-size: 8pt; letter-spacing: 1px;")
-                    if self.api_client.is_authenticated():
-                        self.status_label.setText("ALL SYSTEMS ONLINE")
-                else:
-                    err = self._health_reply.errorString() if self._health_reply else "No reply"
-                    self.conn_label.setText(f"\u26AA {short}")
-                    self.conn_label.setStyleSheet("color: #ef4444; font-size: 8pt; letter-spacing: 1px;")
-                    self.status_label.setText(f"SRV OFFLINE — {err[:50]}")
-            except Exception as e:
-                print(f"Health check error: {e}")
-            finally:
-                if self._health_reply:
-                    self._health_reply.deleteLater()
-                    self._health_reply = None
-        self._health_reply.finished.connect(on_health)
-
     def closeEvent(self, event):
-        self.tray.hide()
-        event.accept()
+        audit.log_action("GUI_STOP", "Sentinel CIC closed")
+        super().closeEvent(event)
 
 
-def _global_excepthook(exc_type, exc_value, exc_tb):
-    import traceback
-    msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-    print(f"CRASH: {msg}", flush=True)
-    with open("crash.log", "w") as f:
-        f.write(msg)
-
-sys.excepthook = _global_excepthook
-
-if __name__ == "__main__":
+def main():
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    window = MainWindow()
+    sys.excepthook = excepthook
+    window = CicWindow()
     window.show()
-    sys.exit(app.exec())
+    return app.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

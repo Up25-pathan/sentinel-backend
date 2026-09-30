@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdi
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor, QAction
 from ui.stat_card import StatCard
-from utils import campaign_manager
+from redlab.utils import campaign_manager
 import sqlite3, os
 from datetime import datetime
 

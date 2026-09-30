@@ -15,9 +15,10 @@ import socket
 import sys
 import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# redlab/bin/recon_job.py -> redlab/ -> pc/
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from utils.net_scanner import (  # noqa: E402
+from redlab.utils.net_scanner import (  # noqa: E402
     FULL_SCAN_PORTS, PORT_SERVICES, grab_banner, identify_service, ping, resolve, scan_port,
 )
 

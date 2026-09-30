@@ -2,7 +2,11 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_DIR = "db"
+# Resolved against pc/ rather than the working directory: the bare relative
+# "db" made the audit database land in a different place depending on where the
+# app was launched from, silently splitting the log in two.
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DB_DIR = os.path.join(_APP_ROOT, "db")
 DB_PATH = os.path.join(DB_DIR, "audit.db")
 
 def setup_database():
