@@ -1,7 +1,8 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+const crypto = require('crypto');
+const { resolveJwtSecret, isUnset } = require('../env');
+const { logAction } = require('../services/audit-log');
 const router = express.Router();
 
 let _passwordHash = process.env.AUTH_PASSWORD_HASH || null;
@@ -10,7 +11,10 @@ let _bcryptAvailable = true;
 async function getPasswordHash() {
     if (_passwordHash) return _passwordHash;
 
-    const plainPassword = process.env.AUTH_PASSWORD || 'intel2024';
+    if (isUnset(process.env.AUTH_PASSWORD)) {
+        throw new Error('AUTH_PASSWORD_HASH is not set');
+    }
+    const plainPassword = String(process.env.AUTH_PASSWORD).trim();
 
     if (!_bcryptAvailable) {
         _passwordHash = plainPassword;
@@ -22,7 +26,16 @@ async function getPasswordHash() {
         _passwordHash = await bcrypt.hash(plainPassword, 10);
         console.log('🔐 Password hash generated (set AUTH_PASSWORD_HASH env var for production)');
     } catch (err) {
-        console.warn('⚠️ bcrypt unavailable, using plaintext fallback. Set AUTH_PASSWORD_HASH to suppress.');
+        // Previously this latched off permanently and silently downgraded the
+        // whole auth path to a plaintext === comparison. Now it is loud, and
+        // the plain path is only used when explicitly enabled.
+        console.error('❌ bcrypt unavailable:', err.message);
+        if (!process.env.ALLOW_PLAINTEXT_PASSWORD) {
+            throw new Error(
+                'bcrypt is unavailable. Install it, set AUTH_PASSWORD_HASH, or explicitly ' +
+                'set ALLOW_PLAINTEXT_PASSWORD=true to permit plaintext comparison.'
+            );
+        }
         _bcryptAvailable = false;
         _passwordHash = plainPassword;
     }
@@ -42,35 +55,53 @@ router.post('/login', async (req, res) => {
         const sanitizedUsername = username.trim();
         const sanitizedPassword = password.trim();
 
-        const validUsername = process.env.AUTH_USERNAME || 'admin';
+        const validUsername = isUnset(process.env.AUTH_USERNAME) ? 'admin' : String(process.env.AUTH_USERNAME).trim();
 
         if (sanitizedUsername !== validUsername) {
+            logAction('AUTH_FAILED', `Login attempt with username '${sanitizedUsername}'`);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        const hash = await getPasswordHash();
+        let hash;
+        try {
+            hash = await getPasswordHash();
+        } catch (configErr) {
+            console.error('Auth configuration error:', configErr.message);
+            return res.status(500).json({ error: 'Server authentication not configured' });
+        }
 
         let isValid = false;
 
         if (_bcryptAvailable) {
             try {
                 const bcrypt = require('bcrypt');
-                isValid = await bcrypt.compare(password, hash);
-            } catch {
-                isValid = (password === hash);
+                isValid = await bcrypt.compare(sanitizedPassword, hash);
+            } catch (err) {
+                console.error('bcrypt compare failed:', err.message);
+                isValid = false;
             }
         } else {
-            isValid = (password === hash);
+            isValid = sanitizedPassword === hash;
         }
 
         if (isValid) {
-            const secret = process.env.JWT_SECRET || 'default-dev-secret-change-in-production';
+            // Same resolver used by middleware/auth.js, so signing and
+            // verification can never diverge.
+            let secret;
+            try {
+                secret = resolveJwtSecret();
+            } catch (configErr) {
+                console.error('Auth configuration error:', configErr.message);
+                return res.status(500).json({ error: 'Server authentication not configured' });
+            }
+
             const token = jwt.sign(
                 { username: sanitizedUsername, role: 'admin' },
                 secret,
                 { expiresIn: '30d' }
             );
 
+            logAction('AUTH_LOGIN', `User '${sanitizedUsername}' authenticated successfully`);
             return res.json({
                 token,
                 user: { username: sanitizedUsername, role: 'admin' },
@@ -78,6 +109,7 @@ router.post('/login', async (req, res) => {
             });
         }
 
+        logAction('AUTH_FAILED', `Invalid credentials for user '${sanitizedUsername}'`);
         return res.status(401).json({ error: 'Invalid credentials' });
     } catch (err) {
         console.error('Auth error:', err);
@@ -92,8 +124,7 @@ router.get('/verify', (req, res) => {
 
     try {
         const token = authHeader.split(' ')[1];
-        const secret = process.env.JWT_SECRET || 'default-dev-secret-change-in-production';
-        const decoded = jwt.verify(token, secret);
+        const decoded = jwt.verify(token, resolveJwtSecret());
         res.json({ valid: true, user: decoded });
     } catch {
         res.status(401).json({ valid: false });

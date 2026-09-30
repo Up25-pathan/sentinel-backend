@@ -5,12 +5,12 @@
  */
 const Groq = require('groq-sdk');
 const { getDb } = require('../db');
-require('dotenv').config();
+const { isUnset } = require('../env');
 
 let groq = null;
 
 function getGroq() {
-    if (!groq && process.env.GROQ_API_KEY) {
+    if (!groq && !isUnset(process.env.GROQ_API_KEY)) {
         groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     }
     return groq;
@@ -32,7 +32,7 @@ async function chat(question) {
 
         events = db.prepare(`
             SELECT id, title, summary, category, risk_level, location_name, 
-                   latitude, longitude, is_breaking, created_at, ai_brief,
+                   lat, lng, is_breaking, created_at, ai_brief,
                    escalation_score, second_order_effects, bias_analysis
             FROM events 
             WHERE ${whereClauses.join(' OR ')}

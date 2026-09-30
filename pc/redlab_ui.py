@@ -1,7 +1,8 @@
 import sys
+import os
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QStackedWidget, QLabel, QProgressBar, QSystemTrayIcon, QMenu
+    QStackedWidget, QLabel, QProgressBar, QSystemTrayIcon, QMenu, QDialog
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -50,11 +51,15 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
 
     def _load_stylesheet(self):
+        base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+        qss_path = os.path.join(base, "ui", "style.qss")
+        if not os.path.exists(qss_path):
+            qss_path = os.path.join(os.path.dirname(base), "ui", "style.qss")
         try:
-            with open("ui/style.qss", "r", encoding="utf-8") as f:
+            with open(qss_path, "r", encoding="utf-8") as f:
                 self.setStyleSheet(f.read())
         except FileNotFoundError:
-            print("Warning: ui/style.qss not found")
+            print(f"Warning: style.qss not found at {qss_path}")
 
     def _setup_tray(self):
         self.tray = QSystemTrayIcon(self)
@@ -295,7 +300,16 @@ class MainWindow(QMainWindow):
             print(f"SSE event error: {e}")
 
     def _auto_login(self):
-        QTimer.singleShot(500, lambda: self._check_server())
+        QTimer.singleShot(500, self._show_login)
+
+    def _show_login(self):
+        from ui.login_dialog import LoginDialog
+        dlg = LoginDialog()
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.api_client.token = dlg.token
+            self._on_login(True, "Authenticated")
+        else:
+            QApplication.quit()
 
     def _check_server(self):
         from utils.api_client import SERVER_URL as SRV
@@ -306,13 +320,10 @@ class MainWindow(QMainWindow):
         def on_health():
             try:
                 if self._health_reply and self._health_reply.error() == QNetworkReply.NetworkError.NoError:
-                    was_offline = not self.api_client.is_authenticated()
                     self.conn_label.setText(f"\u25CF {short}")
                     self.conn_label.setStyleSheet("color: #22d3ee; font-size: 8pt; letter-spacing: 1px;")
-                    self.status_label.setText("ALL SYSTEMS ONLINE")
-                    if was_offline:
-                        self.status_label.setText("SERVER ONLINE — AUTHENTICATING...")
-                        self.api_client.login()
+                    if self.api_client.is_authenticated():
+                        self.status_label.setText("ALL SYSTEMS ONLINE")
                 else:
                     err = self._health_reply.errorString() if self._health_reply else "No reply"
                     self.conn_label.setText(f"\u26AA {short}")

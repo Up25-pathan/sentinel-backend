@@ -1,18 +1,15 @@
 const express = require('express');
 const { getDb } = require('../db');
+const { paginate } = require('../lib/query');
 const router = express.Router();
 
 // GET /api/osint — List raw OSINT events (Telegram, X, etc)
 router.get('/', (req, res) => {
     try {
         const db = getDb();
-        const {
-            page = 1,
-            limit = 20,
-            platform // Optional: 'Telegram' or 'X'
-        } = req.query;
+        const platform = req.query.platform; // Optional: 'Telegram' or 'X'
 
-        const offset = (parseInt(page) - 1) * parseInt(limit);
+        const { limit, page, offset } = paginate(req.query, { defaultLimit: 20, maxLimit: 200 });
 
         let queryStr = `SELECT * FROM raw_articles WHERE source_name LIKE 'OSINT:%'`;
         let params = [];
@@ -23,7 +20,7 @@ router.get('/', (req, res) => {
         }
 
         queryStr += ` ORDER BY published_at DESC LIMIT ? OFFSET ?`;
-        params.push(parseInt(limit), offset);
+        params.push(limit, offset);
 
         const articles = db.prepare(queryStr).all(...params);
 
@@ -39,11 +36,11 @@ router.get('/', (req, res) => {
         res.json({
             data: articles,
             pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
+                page,
+                limit,
                 total: countRow.total,
-                pages: Math.ceil(countRow.total / parseInt(limit))
-            }
+                pages: Math.max(1, Math.ceil(countRow.total / limit)),
+            },
         });
     } catch (err) {
         console.error('Error fetching OSINT:', err);

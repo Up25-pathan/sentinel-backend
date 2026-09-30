@@ -155,7 +155,8 @@ var aircraftMarkers = {};
 var aircraftTimer = null;
 
 function loadAircraft() {
-  fetchJSON(API_URL + '/api/map/aviation')
+  if (!TOKEN) { console.error('Aircraft: NO AUTH TOKEN'); return; }
+  fetchJSON(API_URL + '/api/map/aviation', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
     .then(function(data) {
       const now = Date.now();
       (data.aircraft || []).forEach(function(a) {
@@ -202,7 +203,8 @@ function startAircraftUpdates() {
 }
 
 function loadConflicts() {
-  fetchJSON(API_URL + '/api/map/conflicts')
+  if (!TOKEN) { console.error('Conflicts: NO AUTH TOKEN'); return; }
+  fetchJSON(API_URL + '/api/map/conflicts', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
     .then(function(data) {
       conflictLayer.clearLayers();
       (data.zones || []).forEach(function(zone) {

@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 *.pyo
 myenv/
+venv/
+.env/
 *.egg-info/
 dist/
 build/
@@ -27,6 +29,15 @@ Thumbs.db
 # Logs
 *.log
 server_test.log
+serverlog
+serverlog.*
+
+# Archives
+*.zip
+
+# ATT&CK dataset (~45MB, regenerate via the attack manager instead of committing)
+# db/enterprise-attack.json
+# pc/db/enterprise-attack.json
 
 # IDE
 .vscode/

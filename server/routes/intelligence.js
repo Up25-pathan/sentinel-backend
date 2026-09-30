@@ -1,5 +1,6 @@
 const express = require('express');
 const { getDb } = require('../db');
+const { clampInt, clampDays, pick } = require('../lib/query');
 const { chat } = require('../services/ai-chat');
 const { getLatestDailyBriefing } = require('../services/daily-briefing');
 const { getRiskTrends, getCategoryTrends, getRegionalTrends, getSourceCredibility, getIntelSummary } = require('../services/trend-analysis');
@@ -69,7 +70,7 @@ router.get('/daily', (req, res) => {
 // GET /api/intelligence/trends — Risk trend data over time
 router.get('/trends', (req, res) => {
     try {
-        const days = parseInt(req.query.days) || 30;
+        const days = clampDays(req.query.days, { min: 1, max: 365, fallback: 30 });
         const trends = getRiskTrends(days);
         res.json({ trends, days });
     } catch (err) {
@@ -81,10 +82,11 @@ router.get('/trends', (req, res) => {
 // GET /api/intelligence/trends/categories — Category distribution over time
 router.get('/trends/categories', (req, res) => {
     try {
-        const days = parseInt(req.query.days) || 14;
+        const days = clampDays(req.query.days, { min: 1, max: 365, fallback: 14 });
         const trends = getCategoryTrends(days);
         res.json({ trends, days });
     } catch (err) {
+        console.error('Category trends error:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -92,10 +94,11 @@ router.get('/trends/categories', (req, res) => {
 // GET /api/intelligence/trends/regions — Regional hotspot data
 router.get('/trends/regions', (req, res) => {
     try {
-        const days = parseInt(req.query.days) || 14;
+        const days = clampDays(req.query.days, { min: 1, max: 365, fallback: 14 });
         const regions = getRegionalTrends(days);
         res.json({ regions, days });
     } catch (err) {
+        console.error('Regional trends error:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -126,7 +129,11 @@ router.get('/summary', (req, res) => {
 router.get('/nexus/graph', (req, res) => {
     try {
         const db = getDb();
-        const limit = parseInt(req.query.limit) || 100;
+        const limit = clampInt(req.query.limit, { min: 2, max: 400, fallback: 100 });
+
+        // Integer halves. `limit / 2` produced 25.5 for odd limits, and a float
+        // bound into LIMIT is a SQLite datatype mismatch -> 500.
+        const half = Math.max(1, Math.floor(limit / 2));
 
         // Get recent events as nodes
         const events = db.prepare(`
@@ -134,15 +141,19 @@ router.get('/nexus/graph', (req, res) => {
             FROM events
             ORDER BY created_at DESC
             LIMIT ?
-        `).all(limit / 2);
+        `).all(half);
 
-        // Get high-influence entities as nodes
+        // Get high-influence entities as nodes.
+        // influence_score has never been populated (every row is 0.0), so
+        // ordering by it returned an arbitrary ordering. Fall back to degree —
+        // the number of graph links — which is real.
         const entities = db.prepare(`
-            SELECT id, name as label, type, influence_score
-            FROM entities
-            ORDER BY influence_score DESC
+            SELECT e.id, e.name as label, e.type, e.influence_score,
+                   (SELECT COUNT(*) FROM nexus_links l WHERE l.source_id = e.id) AS degree
+            FROM entities e
+            ORDER BY degree DESC, e.name ASC
             LIMIT ?
-        `).all(limit / 2);
+        `).all(half);
 
         // Get links between them
         const nodes = [...events, ...entities];
@@ -199,17 +210,25 @@ router.get('/nexus/entity/:id', (req, res) => {
 router.get('/sector/:sector', (req, res) => {
     try {
         const db = getDb();
-        const sector = req.params.sector.toUpperCase();
-        
-        let categories = [];
-        if (sector === 'DEFENSE') {
-            categories = ['WAR', 'MILITARY_MOVEMENT', 'DIPLOMATIC_ESCALATION', 'NUCLEAR_THREAT', 'TERRORISM'];
-        } else if (sector === 'ENERGY') {
-            categories = ['ENERGY_SECURITY', 'SANCTIONS', 'ECONOMIC_WARFARE'];
-        } else if (sector === 'CYBER') {
-            categories = ['CYBER_ATTACK', 'DARK_WEB'];
-        } else {
-            return res.status(400).json({ error: 'Invalid sector' });
+        const sector = String(req.params.sector).toUpperCase();
+
+        // These must be a subset of the category CHECK constraint in
+        // db/schema.sql. 'ENERGY_SECURITY', 'ECONOMIC_WARFARE' and 'DARK_WEB'
+        // were listed here but do not exist in the schema, so those branches
+        // matched zero rows and the endpoint returned empty results silently
+        // (verified: 0 rows for each).
+        const SECTOR_CATEGORIES = {
+            DEFENSE: ['WAR', 'MILITARY_MOVEMENT', 'DIPLOMATIC_ESCALATION', 'NUCLEAR_THREAT', 'TERRORISM'],
+            ENERGY: ['SANCTIONS', 'DIPLOMATIC_ESCALATION', 'POLITICAL_INSTABILITY'],
+            CYBER: ['CYBER_ATTACK', 'TERRORISM'],
+        };
+
+        const categories = SECTOR_CATEGORIES[sector];
+        if (!categories) {
+            return res.status(400).json({
+                error: 'Invalid sector',
+                valid: Object.keys(SECTOR_CATEGORIES),
+            });
         }
 
         const placeholders = categories.map(() => '?').join(',');
@@ -220,7 +239,7 @@ router.get('/sector/:sector', (req, res) => {
             LIMIT 20
         `).all(...categories);
 
-        res.json(events);
+        res.json({ sector, categories, count: events.length, events });
     } catch (err) {
         console.error('Sector intel error:', err);
         res.status(500).json({ error: 'Internal server error' });
@@ -231,7 +250,7 @@ router.get('/sector/:sector', (req, res) => {
 router.get('/predictions', (req, res) => {
     try {
         const db = getDb();
-        const limit = parseInt(req.query.limit) || 10;
+        const limit = clampInt(req.query.limit, { min: 1, max: 50, fallback: 10 });
         
         const briefing = db.prepare(`
             SELECT macro_predictions_json FROM global_briefings 
@@ -373,6 +392,9 @@ router.get('/pattern', (req, res) => {
         
         let relatedPairs = [];
         if (recentEvents.length > 0) {
+            // SQLite does not allow a SELECT alias in HAVING, so aggregate with
+            // COUNT(*) and repeat it. The previous `HAVING sync_count > 1`
+            // raised "no such column: sync_count" and 500'd on every call.
             relatedPairs = db.prepare(`
                 SELECT e1.name as entity1, e2.name as entity2, COUNT(*) as sync_count
                 FROM nexus_links l1
@@ -381,8 +403,8 @@ router.get('/pattern', (req, res) => {
                 JOIN entities e2 ON l2.target_id = e2.id
                 WHERE l1.source_id IN (${placeholders})
                 GROUP BY e1.name, e2.name
-                HAVING sync_count > 1
-                ORDER BY sync_count DESC
+                HAVING COUNT(*) > 1
+                ORDER BY COUNT(*) DESC
                 LIMIT 5
             `).all(...recentEvents);
         }
@@ -403,11 +425,16 @@ router.get('/timeline/:entityId', (req, res) => {
         const db = getDb();
         const entityId = req.params.entityId;
 
+        // nexus_links are written entity -> target. Verified against the live
+        // database: 2323/2323 links have source_id in `entities` and 0 in
+        // `events`. `PARTICIPATED_IN` (1693) points at an event;
+        // `ASSOCIATED_WITH` (630) points at another entity. The previous query
+        // had this inverted, so this endpoint always returned [].
         const timeline = db.prepare(`
             SELECT DISTINCT ev.* 
-            FROM events ev
-            JOIN nexus_links l ON ev.id = l.source_id 
-            WHERE l.target_id = ?
+            FROM nexus_links l
+            JOIN events ev ON ev.id = l.target_id 
+            WHERE l.source_id = ?
             ORDER BY ev.created_at DESC
             LIMIT 20
         `).all(entityId);

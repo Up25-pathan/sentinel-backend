@@ -6,9 +6,10 @@ const RSSParser = require('rss-parser');
 const axios = require('axios');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
-require('dotenv').config();
+const { isUnset } = require('../env');
+const { recordSuccess, recordFailure, recordUnconfigured } = require('./source-health');
 
-const rssParser = new RSSParser();
+const rssParser = new RSSParser({ timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SentinelBot/1.0)' } });
 
 // Major geopolitical news RSS feeds
 const RSS_FEEDS = [
@@ -61,9 +62,10 @@ async function ingestFromRSS() {
 
     for (const feed of RSS_FEEDS) {
         try {
-            const parsed = await rssParser.parseURL(feed.url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SentinelBot/1.0)' } });
+            const parsed = await rssParser.parseURL(feed.url);
             const articles = parsed.items || [];
 
+            let newForFeed = 0;
             for (const article of articles) {
                 if (isGeopolitical(article.title, article.contentSnippet || article.content)) {
                     const result = insertStmt.run(
@@ -75,12 +77,13 @@ async function ingestFromRSS() {
                         article.enclosure?.url || null,
                         article.pubDate || new Date().toISOString(),
                     );
-                    if (result.changes > 0) totalIngested++;
+                    if (result.changes > 0) { totalIngested++; newForFeed++; }
                 }
             }
-            console.log(`  📡 ${feed.name}: checked ${articles.length} articles`);
+            console.log(`  📡 ${feed.name}: checked ${articles.length} articles, ${newForFeed} new`);
+            recordSuccess(`rss:${feed.name}`, newForFeed);
         } catch (err) {
-            console.warn(`  ⚠️ RSS feed failed (${feed.name}):`, err.message);
+            recordFailure(`rss:${feed.name}`, err);
         }
     }
 
@@ -92,8 +95,8 @@ async function ingestFromRSS() {
  */
 async function ingestFromNewsAPI() {
     const apiKey = process.env.NEWS_API_KEY;
-    if (!apiKey) {
-        console.log('  ℹ️ NewsAPI key not configured, skipping.');
+    if (isUnset(apiKey)) {
+        recordUnconfigured('newsapi', 'NEWS_API_KEY not set');
         return 0;
     }
 
@@ -105,6 +108,7 @@ async function ingestFromNewsAPI() {
 
     let totalIngested = 0;
     const queries = ['geopolitics', 'military conflict', 'international sanctions', 'political coup'];
+    let failedQueries = 0;
 
     for (const q of queries) {
         try {
@@ -132,9 +136,14 @@ async function ingestFromNewsAPI() {
                 if (result.changes > 0) totalIngested++;
             }
         } catch (err) {
+            // A single bad query should not mark the whole source down.
             console.warn(`  ⚠️ NewsAPI query failed (${q}):`, err.message);
+            failedQueries++;
         }
     }
+
+    if (failedQueries === queries.length) recordFailure('newsapi', 'all queries failed');
+    else recordSuccess('newsapi', totalIngested);
 
     return totalIngested;
 }

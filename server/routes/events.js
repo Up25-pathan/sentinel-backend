@@ -1,22 +1,18 @@
 const express = require('express');
 const { getDb } = require('../db');
+const { paginate, pick, clampInt } = require('../lib/query');
 const router = express.Router();
 
 // GET /api/events — List events (paginated, filterable)
 router.get('/', (req, res) => {
     try {
         const db = getDb();
-        const {
-            page = 1,
-            limit = 20,
-            category,
-            risk_level,
-            is_breaking,
-            sort = 'created_at',
-            order = 'DESC'
-        } = req.query;
+        const { category, risk_level, is_breaking } = req.query;
 
-        const offset = (parseInt(page) - 1) * parseInt(limit);
+        // Clamped: previously `?limit=-1` returned every row in the table and
+        // `?limit=abc` produced a 500 (NaN reached SQLite).
+        const { limit, page, offset } = paginate(req.query, { defaultLimit: 20, maxLimit: 200 });
+
         let where = [`NOT EXISTS (SELECT 1 FROM sources s WHERE s.event_id = events.id AND s.name LIKE 'OSINT:%')`];
         let params = [];
 
@@ -30,13 +26,12 @@ router.get('/', (req, res) => {
         }
         if (is_breaking !== undefined) {
             where.push('is_breaking = ?');
-            params.push(parseInt(is_breaking));
+            params.push(is_breaking === 'true' || is_breaking === '1' ? 1 : 0);
         }
 
         const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-        const allowedSorts = ['created_at', 'risk_level', 'category'];
-        const sortCol = allowedSorts.includes(sort) ? sort : 'created_at';
-        const sortOrder = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+        const sortCol = pick(req.query.sort, ['created_at', 'risk_level', 'category'], 'created_at');
+        const sortOrder = String(req.query.order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
         // Get total count
         const countRow = db.prepare(`SELECT COUNT(*) as total FROM events ${whereClause}`).get(...params);
@@ -46,7 +41,7 @@ router.get('/', (req, res) => {
             SELECT * FROM events ${whereClause} 
             ORDER BY is_breaking DESC, ${sortCol} ${sortOrder}
             LIMIT ? OFFSET ?
-        `).all(...params, parseInt(limit), offset);
+        `).all(...params, limit, offset);
 
         // Get source counts for each event
         const enriched = events.map(event => {
@@ -75,15 +70,17 @@ router.get('/', (req, res) => {
         res.json({
             events: enriched,
             pagination: {
-                page: parseInt(page),
-                limit: parseInt(limit),
+                page,
+                limit,
                 total: countRow.total,
-                pages: Math.ceil(countRow.total / parseInt(limit))
-            }
+                pages: Math.max(1, Math.ceil(countRow.total / limit)),
+            },
         });
     } catch (err) {
+        // `stack` was serialised to clients in the response body. Log it
+        // server-side instead of publishing internal paths to the network.
         console.error('Error fetching events:', err);
-        res.status(500).json({ error: 'Failed to fetch events', details: err.message, stack: err.stack });
+        res.status(500).json({ error: 'Failed to fetch events' });
     }
 });
 
@@ -109,7 +106,8 @@ router.get('/breaking', (req, res) => {
 router.get('/search', (req, res) => {
     try {
         const db = getDb();
-        const { q, category, risk_level, limit = 20 } = req.query;
+        const { q, category, risk_level } = req.query;
+        const limit = clampInt(req.query.limit, { min: 1, max: 100, fallback: 20 });
 
         if (!q) {
             return res.status(400).json({ error: 'Search query (q) is required' });
@@ -132,7 +130,7 @@ router.get('/search', (req, res) => {
             WHERE ${where.join(' AND ')}
             ORDER BY created_at DESC
             LIMIT ?
-        `).all(...params, parseInt(limit));
+        `).all(...params, limit);
 
         res.json({ events, query: q, count: events.length });
     } catch (err) {
