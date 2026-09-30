@@ -186,6 +186,7 @@ class ShellWindow(QMainWindow):
         self.content = QStackedWidget()
         self.content.setObjectName("ContentArea")
         self.build_panels()
+        self._polish_panels()
         body.addWidget(self.content, 1)
         main.addLayout(body, 1)
 
@@ -194,6 +195,16 @@ class ShellWindow(QMainWindow):
         self._install_shortcuts()
         if self.panel_keys:
             self._on_nav(self.panel_keys[0])
+
+    def _polish_panels(self):
+        """Apply the shared polish pass to every panel, once, at startup."""
+        from .polish import polish
+        self._polished = 0
+        for key in self.panel_keys:
+            try:
+                self._polished += polish(self.panels[key])
+            except Exception as exc:  # noqa: BLE001 - polish must never block boot
+                print(f"Polish skipped for {key}: {exc}")
 
     def _build_header(self, parent):
         header = QWidget()

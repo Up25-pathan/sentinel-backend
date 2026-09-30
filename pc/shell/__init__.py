@@ -7,6 +7,7 @@ chrome lives here, so the two apps stay visually identical without either
 importing the other's panels.
 """
 
+from .polish import polish, set_empty_text
 from .shell import ShellWindow, load_stylesheet, excepthook
 
-__all__ = ["ShellWindow", "load_stylesheet", "excepthook"]
+__all__ = ["ShellWindow", "load_stylesheet", "excepthook", "polish", "set_empty_text"]
