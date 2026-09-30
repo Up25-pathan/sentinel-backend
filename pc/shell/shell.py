@@ -48,6 +48,12 @@ def excepthook(exc_type, exc_value, exc_tb):
     Qt callbacks that raise otherwise abort the process, taking unsaved UI state
     with them. Reporting and surviving is the better failure mode here.
     """
+    if issubclass(exc_type, KeyboardInterrupt):
+        # Ctrl+C in the user's terminal is not a crash worth recording; Qt
+        # routes it through here because the hook is installed process-wide.
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+
     text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
     print(f"CRASH: {text}", flush=True)
     try:
@@ -94,6 +100,12 @@ class NavRail(QWidget):
             self.buttons[key] = btn
 
         outer.addStretch()
+
+    def select(self, key):
+        """Highlight `key` and announce the navigation."""
+        for candidate, item in self.buttons.items():
+            item.setChecked(candidate == key)
+        self.navigationChanged.emit(key)
 
 
 class RailItem(QWidget):

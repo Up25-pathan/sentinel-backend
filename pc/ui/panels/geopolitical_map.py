@@ -120,7 +120,7 @@ function fetchJSON(url, headers) {
 }
 
 function loadMarkers() {
-  if (!TOKEN) { setStatus('NO AUTH TOKEN', '#ef4444'); return; }
+  if (!requireToken('Intel')) return;
   setStatus('LOADING INTEL...', '#22d3ee');
   const headers = { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' };
   fetchJSON(API_URL + '/api/map/markers', { headers: headers })
@@ -154,8 +154,18 @@ function loadMarkers() {
 var aircraftMarkers = {};
 var aircraftTimer = null;
 
+// Poll without a token is pointless and floods the log once per interval.
+function requireToken(label) {
+  if (TOKEN) return true;
+  if (!requireToken.warned) {
+    requireToken.warned = true;
+    setStatus('AUTHENTICATION REQUIRED', '#ef4444');
+  }
+  return false;
+}
+
 function loadAircraft() {
-  if (!TOKEN) { console.error('Aircraft: NO AUTH TOKEN'); return; }
+  if (!requireToken('Aircraft')) return;
   fetchJSON(API_URL + '/api/map/aviation', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
     .then(function(data) {
       const now = Date.now();
@@ -203,7 +213,7 @@ function startAircraftUpdates() {
 }
 
 function loadConflicts() {
-  if (!TOKEN) { console.error('Conflicts: NO AUTH TOKEN'); return; }
+  if (!requireToken('Conflicts')) return;
   fetchJSON(API_URL + '/api/map/conflicts', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
     .then(function(data) {
       conflictLayer.clearLayers();
@@ -309,6 +319,17 @@ class GeopoliticalMapPanel(QWidget):
 
         self.web_view = QWebEngineView()
         layout.addWidget(self.web_view, 1)
+
+        # The map HTML embeds the bearer token, and this panel is built before
+        # the login dialog is answered. Reload once a token exists, otherwise
+        # the page stays permanently unauthenticated and every poll fails.
+        login_result = getattr(self.api_client, "loginResult", None)
+        if login_result is not None:
+            login_result.connect(self._on_login)
+
+    def _on_login(self, ok, _message):
+        if ok:
+            self._load_map()
 
     def _load_map(self):
         try:

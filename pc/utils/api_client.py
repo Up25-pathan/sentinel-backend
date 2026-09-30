@@ -31,6 +31,7 @@ class ApiClient(QObject):
         self._sse_timer.timeout.connect(self._connect_sse_internal)
         self._sse_active = False
         self._sse_retries = 0
+        self._sse_waiting_for_auth = False
 
     def login(self, username="admin", password="intel2024"):
         url = QUrl(f"{SERVER_URL}/api/auth/login")
@@ -48,6 +49,12 @@ class ApiClient(QObject):
 
     def connect_sse(self):
         if self._sse_active:
+            return
+        # Without a token the server answers 401 every time. Retrying on a
+        # backoff then floods the log with "Host requires authentication" for
+        # as long as the login dialog sits unanswered.
+        if not self.token:
+            self._sse_waiting_for_auth = True
             return
         self._sse_active = True
         self._sse_retries = 0
@@ -183,6 +190,9 @@ class ApiClient(QObject):
         if tag == "login":
             if "token" in parsed:
                 self.token = parsed["token"]
+                if getattr(self, "_sse_waiting_for_auth", False):
+                    self._sse_waiting_for_auth = False
+                    self.connect_sse()
                 self.loginResult.emit(True, "Authenticated")
             else:
                 self.loginResult.emit(False, parsed.get("error", "Login failed"))
