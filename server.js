@@ -211,12 +211,24 @@ app.use('/api/darkweb', authMiddleware, darkwebRoutes);
 app.use('/api/audit', authMiddleware, auditRoutes);
 app.use('/api/assets', authMiddleware, assetRoutes);
 
-// ─── Seed Endpoint (protected) ──────────────────────────────────
+// ─── Seed Endpoint (protected, dev-only) ────────────────────────
+// db/seed.js inserts INVENTED geopolitical events, alerts and dark-web
+// posts so the UI has something to render during development. Those rows are
+// indistinguishable from real intel once written, so seeding is refused on a
+// deployed instance: a live dashboard must only ever show collected data.
+const SEED_BLOCKED = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
+
 app.post('/api/seed', authMiddleware, (req, res) => {
+    if (SEED_BLOCKED) {
+        return res.status(403).json({
+            error: 'Seeding is disabled on a deployed instance',
+            detail: 'db/seed.js writes fabricated events that would be shown as real intel.',
+        });
+    }
     try {
         const seed = require('./db/seed');
         seed();
-        res.json({ success: true, message: 'Database reseeded' });
+        res.json({ success: true, message: 'Database reseeded (development only)' });
     } catch (err) {
         console.error('Seed error:', err);
         res.status(500).json({ error: 'Seed failed' });

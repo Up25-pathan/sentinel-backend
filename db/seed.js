@@ -1,14 +1,21 @@
 /**
- * Seed Data — Realistic Geopolitical Events for UI Testing
- * Run with: npm run seed
+ * Seed Data — FABRICATED geopolitical events for UI testing only.
+ *
+ * Every row below is invented. None of it comes from a real feed. It exists
+ * only so a fresh local database has something to render while developing.
+ *
+ * DO NOT run this against a deployed instance: the rows are indistinguishable
+ * from collected intel once written and would appear as real events on the
+ * dashboard. POST /api/seed refuses to run when NODE_ENV=production or
+ * RENDER=true. Run locally with: npm run seed
  */
 const { getDb } = require('./index');
 const { v4: uuidv4 } = require('uuid');
 
 const EVENTS = [
     {
-        title: 'Major Military Escalation in Eastern Mediterranean',
-        summary: 'Naval forces from multiple nations have converged in the Eastern Mediterranean following territorial disputes over exclusive economic zones. Tensions have risen sharply after a confrontation between patrol vessels near disputed waters.',
+        title: 'FABRICATED TEST EVENT: Major Military Escalation in Eastern Mediterranean',
+        summary: 'INVENTED SAMPLE DATA - not a real report. Naval forces from multiple nations have converged in the Eastern Mediterranean following territorial disputes over exclusive economic zones. Tensions have risen sharply after a confrontation between patrol vessels near disputed waters.',
         ai_brief: '🔴 CRITICAL: Multi-national naval buildup in Eastern Mediterranean. Three carrier groups repositioned within 48 hours. Intelligence suggests this is the largest concentration of naval assets in the region since 2020. Risk of miscalculation is elevated.',
         category: 'MILITARY_MOVEMENT',
         risk_level: 'CRITICAL',
