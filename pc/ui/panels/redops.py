@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from utils.workers import JobRunner
+from utils.background import run_in_background
 from utils import docker_tools, vm_tools, audit
 import sys
 from datetime import datetime
@@ -42,6 +43,10 @@ class RedOpsPanel(QWidget):
         super().__init__()
         self.job_counter = 0
         self.job_runners = {}
+        # Hold references so a worker outliving the panel cannot deliver a
+        # result into a deleted widget tree.
+        self._labs_task = None
+        self._vms_task = None
         self._setup_ui()
 
     def _setup_ui(self):
@@ -247,8 +252,19 @@ class RedOpsPanel(QWidget):
         self._update_history()
 
     def _update_labs(self):
-        self.labs_table.setRowCount(0)
-        labs = docker_tools.list_labs()
+        """Discover containers on a worker.
+
+        docker_tools.list_labs() opens a socket to the Docker daemon and pings
+        it. That ran inline from __init__ and again on every navigation, so a
+        stopped or slow Docker Desktop froze the whole UI.
+        """
+        self._labs_task = run_in_background(
+            docker_tools.list_labs,
+            on_done=self._render_labs,
+            on_error=lambda msg: self.labs_table.setRowCount(0),
+        )
+
+    def _render_labs(self, labs):
         self.labs_table.setRowCount(len(labs))
         for row, lab in enumerate(labs):
             status_color = {"running": "#22d3ee", "stopped": "#ef4444"}.get(lab['status'], "#64748b")
@@ -266,13 +282,24 @@ class RedOpsPanel(QWidget):
             self.labs_table.setCellWidget(row, 3, stop_btn)
 
     def _update_vms(self):
-        self.vm_table.setRowCount(0)
-        vms = vm_tools.list_vms()
-        if not vms:
-            return
+        """Discover VMs on a worker.
+
+        Each VM costs a separate VBoxManage invocation, all serial and all
+        blocking; with several VMs this was several seconds of frozen UI.
+        """
+        def discover():
+            names = vm_tools.list_vms()
+            return [(name, vm_tools.get_vm_status(name)) for name in names]
+
+        self._vms_task = run_in_background(
+            discover,
+            on_done=self._render_vms,
+            on_error=lambda msg: self.vm_table.setRowCount(0),
+        )
+
+    def _render_vms(self, vms):
         self.vm_table.setRowCount(len(vms))
-        for row, vm_name in enumerate(vms):
-            status = vm_tools.get_vm_status(vm_name)
+        for row, (vm_name, status) in enumerate(vms):
             status_color = {"running": "#22d3ee", "stopped": "#ef4444", "paused": "#f59e0b"}.get(status, "#64748b")
             self.vm_table.setItem(row, 0, QTableWidgetItem(vm_name))
             si = QTableWidgetItem(status)

@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from utils import campaign_manager, attack_manager, audit
+from utils.background import run_in_background
 
 PHASE_COLORS = {
     "pending": "#64748b",
@@ -18,10 +19,47 @@ PHASE_COLORS = {
 class CampaignsPanel(QWidget):
     def __init__(self):
         super().__init__()
-        self.attack_data = attack_manager.get_attack_data()
+        # Loaded on a worker the first time this panel is shown. It used to be
+        # read here in __init__, which meant a ~45.7 MB parse (and, on a cold
+        # cache, a download) ran before the main window was shown at all.
+        self.attack_data = None
+        self._attack_task = None
         self._current_campaign_id = None
         self._setup_ui()
         self._populate_campaigns()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._ensure_attack_data()
+
+    def _ensure_attack_data(self):
+        if self.attack_data is not None or self._attack_task is not None:
+            return
+        self._set_attack_status("Loading MITRE ATT&CK index...")
+        self._attack_task = run_in_background(
+            lambda: attack_manager.get_attack_data(allow_download=False),
+            on_done=self._on_attack_data,
+            on_error=self._on_attack_error,
+        )
+
+    def _on_attack_data(self, data):
+        self._attack_task = None
+        self.attack_data = data
+        if not data:
+            self._set_attack_status("ATT&CK index unavailable")
+            return
+        self._populate_tree()
+        self._set_attack_status("")
+
+    def _on_attack_error(self, message):
+        self._attack_task = None
+        self._set_attack_status(f"ATT&CK index failed to load: {message}")
+
+    def _set_attack_status(self, text):
+        label = getattr(self, "attack_status", None)
+        if label is not None:
+            label.setText(text)
+            label.setVisible(bool(text))
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -96,12 +134,17 @@ class CampaignsPanel(QWidget):
         search_bar.textChanged.connect(self._filter_tree)
         right_layout.addWidget(search_bar)
 
+        self.attack_status = QLabel("")
+        self.attack_status.setStyleSheet("color:#64748b; font-size:7pt;")
+        self.attack_status.setVisible(False)
+        right_layout.addWidget(self.attack_status)
+
         self.attack_tree = QTreeWidget()
         self.attack_tree.setColumnCount(2)
         self.attack_tree.setHeaderLabels(["Technique", "ID"])
         self.attack_tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.attack_tree.setIndentation(16)
-        self._populate_tree()
+        self.attack_tree.hide()
         right_layout.addWidget(self.attack_tree, 1)
 
         # Assign TTP button
@@ -116,6 +159,7 @@ class CampaignsPanel(QWidget):
 
     def _populate_tree(self):
         self.attack_tree.clear()
+        self.attack_tree.setVisible(bool(self.attack_data))
         if not self.attack_data:
             return
         for tactic_group in self.attack_data:
@@ -126,6 +170,7 @@ class CampaignsPanel(QWidget):
                 tech_item = QTreeWidgetItem(tactic_item)
                 tech_item.setText(0, tech["name"])
                 tech_item.setText(1, tech["id"])
+        self.attack_tree.expandToDepth(0)
 
     def _filter_tree(self, text):
         search = text.lower()
@@ -277,3 +322,6 @@ class CampaignsPanel(QWidget):
 
     def refresh(self):
         self._populate_campaigns()
+        # Navigating to this panel is the natural moment to start the load, for
+        # the case where showEvent has not fired yet during construction.
+        self._ensure_attack_data()

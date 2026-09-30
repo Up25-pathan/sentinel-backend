@@ -41,6 +41,11 @@ serverlog.*
 # ATT&CK dataset (~45MB, regenerate via the attack manager instead of committing)
 # db/enterprise-attack.json
 # pc/db/enterprise-attack.json
+# Derived index of the above, rebuilt automatically from the dataset.
+db/enterprise-attack.compact.json
+pc/db/enterprise-attack.compact.json
+db/*.part
+pc/db/*.part
 
 # IDE
 .vscode/

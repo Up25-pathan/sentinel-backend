@@ -1,38 +1,43 @@
 # utils/vm_tools.py
 
-import subprocess
 import re
+import subprocess
+import time
+
+# Every call below blocks the calling thread. RedOpsPanel used to invoke these
+# from __init__ and again on every navigation, with no timeout, so a wedged
+# VirtualBox install froze the GUI indefinitely.
+COMMAND_TIMEOUT = 10
+
 
 def _run_command(args):
-    """A helper function to run VBoxManage commands."""
+    """Run a VBoxManage command. Returns (ok, output)."""
+    command = ["VBoxManage"] + args
     try:
-        # We add VBoxManage to the front of the arguments list
-        command = ["VBoxManage"] + args
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            timeout=COMMAND_TIMEOUT,
         )
         return True, result.stdout.strip()
     except FileNotFoundError:
-        # This error occurs if VBoxManage is not in the system's PATH
         return False, "VBoxManage not found. Is VirtualBox installed and in your PATH?"
+    except subprocess.TimeoutExpired:
+        return False, f"VBoxManage {args[0] if args else '?'} timed out after {COMMAND_TIMEOUT}s"
     except subprocess.CalledProcessError as e:
-        # This error occurs if the command returns a non-zero exit code
-        return False, e.stderr.strip()
+        return False, (e.stderr or "").strip() or f"exit code {e.returncode}"
 
 def list_vms():
     """Lists all available VirtualBox VMs."""
     success, output = _run_command(["list", "vms"])
     if not success:
-        print(f"[VM_TOOLS_ERROR] {output}")
         return []
-    
+
     # The output format is "VM Name" {uuid}
     # We use regex to extract just the name inside the quotes
-    vm_names = re.findall(r'"(.+?)"', output)
-    return vm_names
+    return re.findall(r'"(.+?)"', output)
 
 def get_vm_status(vm_name: str):
     """Checks if a VM is currently running."""
@@ -61,7 +66,6 @@ def reset_vm(vm_name: str, snapshot_name: str):
         # We use 'poweroff' for a quick stop, as the state is being discarded anyway.
         _run_command(["controlvm", vm_name, "poweroff"])
         # Wait a moment for the VM to power down
-        import time
         time.sleep(3)
 
     return _run_command(["snapshot", vm_name, "restore", snapshot_name])

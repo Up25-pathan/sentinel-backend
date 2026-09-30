@@ -18,14 +18,37 @@ COLOR_MAP = {
     "GUI_START": "#64748b",
 }
 
+DEFAULT_COLOR = QColor("#94a3b8")
+
+# Built once. This ran every 5 seconds and parsed a colour string per row.
+COLOR_CACHE = {action: QColor(value) for action, value in COLOR_MAP.items()}
+
+REFRESH_MS = 5000
+MAX_ROWS = 100
+
+
 class AuditLogPanel(QWidget):
     def __init__(self):
         super().__init__()
+        self._last_rows = None
         self._setup_ui()
         self._refresh()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
-        self._timer.start(5000)
+        # Started from showEvent instead. A timer is not a widget, so Qt does not
+        # stop it when its parent panel is hidden by the QStackedWidget: this
+        # used to query SQLite and rebuild 100 rows every 5 seconds for the
+        # entire lifetime of the process, whether or not anyone opened this tab.
+        self._timer.setInterval(REFRESH_MS)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh()
+        self._timer.start()
+
+    def hideEvent(self, event):
+        self._timer.stop()
+        super().hideEvent(event)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -57,19 +80,25 @@ class AuditLogPanel(QWidget):
         layout.addWidget(self.table, 1)
 
     def _refresh(self):
-        logs = audit.get_latest_logs(100)
-        self.table.setRowCount(len(logs))
-        for row, (timestamp, action, details) in enumerate(logs):
-            color = QColor(COLOR_MAP.get(action, "#94a3b8"))
-            items = [
-                QTableWidgetItem(timestamp),
-                QTableWidgetItem(action),
-                QTableWidgetItem(details),
-            ]
-            for item in items:
-                item.setForeground(color)
-                self.table.setItem(row, 0, items[0])
-                self.table.setItem(row, 1, items[1])
-                self.table.setItem(row, 2, items[2])
+        logs = audit.get_latest_logs(MAX_ROWS)
+        rows = [tuple(row) for row in logs]
+
+        # Nothing changed, so leave the table alone. Rebuilding 100 rows x 3
+        # items on every tick was the cost of this panel even when idle.
+        if rows == self._last_rows:
+            self.status_label.setText(f"{len(rows)} entries")
+            return
+
+        self.table.setRowCount(len(rows))
+        for row, values in enumerate(rows):
+            color = None
+            for column, value in enumerate(values):
+                item = QTableWidgetItem("" if value is None else str(value))
+                if column == 1:
+                    color = COLOR_CACHE.get(value, DEFAULT_COLOR)
+                item.setForeground(color or DEFAULT_COLOR)
+                self.table.setItem(row, column, item)
         self.table.scrollToBottom()
-        self.status_label.setText(f"{len(logs)} entries")
+
+        self._last_rows = rows
+        self.status_label.setText(f"{len(rows)} entries")
