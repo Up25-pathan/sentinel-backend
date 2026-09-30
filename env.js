@@ -59,43 +59,86 @@ function isUsableSecret(value, minLength = 32) {
     return !isUnset(value) && String(value).trim().length >= minLength;
 }
 
-const JWT_FALLBACK = 'default-dev-secret-change-in-production';
+/**
+ * Generate a strong random secret.
+ */
+function generateSecret() {
+    return require('crypto').randomBytes(48).toString('hex');
+}
 
 /**
- * Resolve the JWT secret, or throw.
+ * Where to persist a generated secret: alongside the database, because on
+ * Render the database is the thing most likely to live on a persistent disk.
+ * A secret that sits next to a wiped database would rotate on every cold start.
+ */
+function secretFilePath() {
+    const dbPath = process.env.DB_PATH
+        ? path.resolve(SERVER_DIR, process.env.DB_PATH)
+        : path.join(SERVER_DIR, 'db', 'geoint.db');
+    return path.join(path.dirname(dbPath), '.jwt_secret');
+}
+
+let generatedSecret = null;
+
+/**
+ * Obtain a usable JWT secret, in order of preference:
+ *   1. JWT_SECRET from the environment (correct, and survives everything)
+ *   2. A generated secret persisted next to the database
+ *   3. A generated secret held in memory for this process only
  *
- * routes/auth.js signs with `JWT_SECRET || fallback` while middleware/auth.js
- * verifies with `JWT_SECRET` and no fallback. If JWT_SECRET is unset, login
- * succeeds and every authenticated request then fails. Failing here removes
- * that class of silent lockout entirely.
+ * This deliberately does not throw. The previous hardcoded fallback was
+ * committed to a public repository, so anybody could mint a valid token for
+ * the live deployment; a per-install random secret removes that exposure. The
+ * consequence of not setting JWT_SECRET is that tokens stop validating after a
+ * cold start on an ephemeral filesystem, which costs a re-login — far better
+ * than refusing to boot and taking the whole service down.
  */
 function resolveJwtSecret() {
-    if (isUnset(process.env.JWT_SECRET)) {
-        throw new Error(
-            '\n' +
-            '='.repeat(63) + '\n' +
-            'FATAL: JWT_SECRET is not configured — refusing to start.\n' +
-            '='.repeat(63) + '\n' +
-            'Without it, login would issue tokens that no request could verify,\n' +
-            'producing an app that accepts credentials then 401s on everything.\n' +
-            '\n' +
-            'To fix:\n' +
-            '  Local:   add JWT_SECRET=<random 64+ chars> to server/.env\n' +
-            '  Render:  Dashboard -> your service -> Environment -> add\n' +
-            '           JWT_SECRET, then redeploy.\n' +
-            '\n' +
-            'Generate one with:\n' +
-            '  node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"\n' +
-            '='.repeat(63)
-        );
+    if (!isUnset(process.env.JWT_SECRET)) {
+        const value = String(process.env.JWT_SECRET).trim();
+        if (value.length < 32) {
+            console.warn(
+                '⚠️  JWT_SECRET is shorter than 32 characters. This is weaker than ' +
+                'recommended for a signing key.'
+            );
+        }
+        return value;
     }
-    if (!isUsableSecret(process.env.JWT_SECRET, 32)) {
+
+    if (generatedSecret) return generatedSecret;
+
+    console.warn(
+        '\n' +
+        '⚠️  JWT_SECRET is not set — generating a secret automatically.\n' +
+        '    Set JWT_SECRET in the environment (Render: Dashboard -> Environment)\n' +
+        '    so that logins survive restarts. Until then, every cold start\n' +
+        '    invalidates existing sessions and clients must log in again.\n'
+    );
+
+    // 2. Persist next to the database.
+    try {
+        const file = secretFilePath();
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        if (fs.existsSync(file)) {
+            const stored = fs.readFileSync(file, 'utf8').trim();
+            if (stored.length >= 32) {
+                generatedSecret = stored;
+                return generatedSecret;
+            }
+        }
+        const fresh = generateSecret();
+        fs.writeFileSync(file, fresh, { mode: 0o600 });
+        generatedSecret = fresh;
+        return generatedSecret;
+    } catch (err) {
+        // 3. Read-only filesystem: ephemeral secret, logged as such.
+        generatedSecret = generateSecret();
         console.warn(
-            '⚠️  JWT_SECRET is shorter than 32 characters. This is weaker than recommended ' +
-            'for a signing key.'
+            `⚠️  Could not persist a generated secret (${err.message}). ` +
+            'Using an in-memory secret — logins will reset on every restart.'
         );
+        return generatedSecret;
     }
-    return String(process.env.JWT_SECRET).trim();
 }
 
 /**
@@ -110,7 +153,7 @@ function configStatus() {
         openai: isUnset(process.env.OPENAI_API_KEY) ? 'unconfigured' : 'configured',
         openSky: isUnset(process.env.OPENSKY_USERNAME) ? 'anonymous' : 'configured',
         apiSecretKey: isUnset(process.env.API_SECRET_KEY) ? 'disabled' : 'configured',
-        jwtSecret: isUnset(process.env.JWT_SECRET) ? 'unconfigured' : 'configured',
+        jwtSecret: isUnset(process.env.JWT_SECRET) ? 'generated (set JWT_SECRET to persist)' : 'configured',
         authUsername: isUnset(process.env.AUTH_USERNAME) ? 'admin (default)' : 'configured',
     };
 }
@@ -120,11 +163,17 @@ function configStatus() {
  * failure; warns on anything that only degrades capability.
  */
 function validateEnv() {
-    // Hard requirement — throws.
+    // Always yields a usable secret (env, persisted, or ephemeral).
     resolveJwtSecret();
 
     const warnings = [];
 
+    if (isUnset(process.env.JWT_SECRET)) {
+        warnings.push(
+            'JWT_SECRET is not set — a random secret is being generated. ' +
+            'Set it in the environment so sessions survive restarts.'
+        );
+    }
     if (isUnset(process.env.API_SECRET_KEY)) {
         warnings.push(
             'API_SECRET_KEY is not set — the X-API-Key second layer is disabled ' +
@@ -159,10 +208,10 @@ function validateEnv() {
 
 module.exports = {
     SERVER_DIR,
-    JWT_FALLBACK,
     isUnset,
     isUsableSecret,
     resolveJwtSecret,
+    generateSecret,
     configStatus,
     validateEnv,
 };
