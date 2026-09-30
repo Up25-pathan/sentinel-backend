@@ -257,14 +257,25 @@ class RedOpsPanel(QWidget):
         docker_tools.list_labs() opens a socket to the Docker daemon and pings
         it. That ran inline from __init__ and again on every navigation, so a
         stopped or slow Docker Desktop froze the whole UI.
+
+        A discovery already in flight is never duplicated: each one shells out
+        to the Docker daemon, and stacking them made a slow daemon look like a
+        hung application.
         """
+        if self._labs_task is not None:
+            return
         self._labs_task = run_in_background(
             docker_tools.list_labs,
             on_done=self._render_labs,
-            on_error=lambda msg: self.labs_table.setRowCount(0),
+            on_error=self._on_labs_error,
         )
 
+    def _on_labs_error(self, message):
+        self._labs_task = None
+        self.labs_table.setRowCount(0)
+
     def _render_labs(self, labs):
+        self._labs_task = None
         self.labs_table.setRowCount(len(labs))
         for row, lab in enumerate(labs):
             status_color = {"running": "#22d3ee", "stopped": "#ef4444"}.get(lab['status'], "#64748b")
@@ -286,7 +297,13 @@ class RedOpsPanel(QWidget):
 
         Each VM costs a separate VBoxManage invocation, all serial and all
         blocking; with several VMs this was several seconds of frozen UI.
+
+        Skipped while a discovery is already running, so rapid navigation
+        cannot queue up overlapping VBoxManage process storms.
         """
+        if self._vms_task is not None:
+            return
+
         def discover():
             names = vm_tools.list_vms()
             return [(name, vm_tools.get_vm_status(name)) for name in names]
@@ -294,10 +311,15 @@ class RedOpsPanel(QWidget):
         self._vms_task = run_in_background(
             discover,
             on_done=self._render_vms,
-            on_error=lambda msg: self.vm_table.setRowCount(0),
+            on_error=self._on_vms_error,
         )
 
+    def _on_vms_error(self, message):
+        self._vms_task = None
+        self.vm_table.setRowCount(0)
+
     def _render_vms(self, vms):
+        self._vms_task = None
         self.vm_table.setRowCount(len(vms))
         for row, (vm_name, status) in enumerate(vms):
             status_color = {"running": "#22d3ee", "stopped": "#ef4444", "paused": "#f59e0b"}.get(status, "#64748b")

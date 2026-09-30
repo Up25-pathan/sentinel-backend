@@ -37,23 +37,42 @@ class CampaignsPanel(QWidget):
             return
         self._set_attack_status("Loading MITRE ATT&CK index...")
         self._attack_task = run_in_background(
-            lambda: attack_manager.get_attack_data(allow_download=False),
+            self._load_attack_index,
             on_done=self._on_attack_data,
             on_error=self._on_attack_error,
+            on_progress=self._on_attack_progress,
         )
+
+    def _load_attack_index(self, progress=None):
+        # Worker thread, no widget access. Downloads are allowed here because
+        # the work already runs off the GUI thread; previously a cold cache
+        # could never populate, so the panel stayed permanently empty.
+        return attack_manager.get_attack_data(progress=progress, allow_download=True)
+
+    def _on_attack_progress(self, part):
+        written, total = part
+        if total:
+            pct = 100.0 * written / total
+            self._set_attack_status(f"Downloading MITRE ATT&CK data... {pct:.0f}%")
+        else:
+            mb = written / (1024 * 1024)
+            self._set_attack_status(f"Downloading MITRE ATT&CK data... {mb:.1f} MB")
 
     def _on_attack_data(self, data):
         self._attack_task = None
         self.attack_data = data
         if not data:
-            self._set_attack_status("ATT&CK index unavailable")
+            # No fallback list: say the index is missing and how to recover.
+            self._set_attack_status(
+                "MITRE ATT&CK data unavailable - check network access and reopen this panel"
+            )
             return
         self._populate_tree()
         self._set_attack_status("")
 
     def _on_attack_error(self, message):
         self._attack_task = None
-        self._set_attack_status(f"ATT&CK index failed to load: {message}")
+        self._set_attack_status(f"MITRE ATT&CK download failed: {message}")
 
     def _set_attack_status(self, text):
         label = getattr(self, "attack_status", None)

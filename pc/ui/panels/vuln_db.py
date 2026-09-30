@@ -1,37 +1,30 @@
+"""Vulnerability Database — live NVD CVE + CISA KEV data.
+
+This panel previously carried a hardcoded list of 15 invented CVEs
+(CVE-2024-00001 "Apache Log4j 2.x", and so on) and displayed it on *any* failure
+of the request. The endpoint it called, /api/intelligence/vulns, did not exist,
+so the fallback fired on 100% of runs and the panel showed fabricated
+vulnerabilities permanently. There is no local data set here now: every row
+comes from the server, and when the feed is unavailable the panel says so.
+"""
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-                             QComboBox, QSplitter, QFrame, QTextEdit)
-from PyQt6.QtCore import Qt, QTimer
+                             QComboBox, QSplitter, QFrame, QTextEdit, QCheckBox)
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QColor
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
-from PyQt6.QtCore import QUrl
 from utils.api_client import SERVER_URL
-import json, random
+import json
 
 SEVERITY_COLORS = {
     "CRITICAL": "#ef4444",
     "HIGH": "#f59e0b",
     "MEDIUM": "#22d3ee",
     "LOW": "#475569",
+    "UNKNOWN": "#64748b",
 }
 
-MOCK_VULNS = [
-    {"cve_id": "CVE-2024-00001", "severity": "CRITICAL", "score": 9.8, "software": "Apache Log4j 2.x", "status": "Active", "date": "2024-01-15", "description": "Remote code execution in Log4j JNDI lookup feature. Unauthenticated attackers can execute arbitrary code by sending crafted log messages.", "affected_versions": "2.0 - 2.17.0", "exploit_status": "Weaponized", "related_intel": ["APT-42 activity spike detected", "Multiple ransomware groups adopting exploit"]},
-    {"cve_id": "CVE-2024-00002", "severity": "CRITICAL", "score": 9.1, "software": "Windows Kerberos", "status": "Active", "date": "2024-02-03", "description": "Privilege escalation in Kerberos authentication protocol allowing domain admin compromise.", "affected_versions": "Windows Server 2019-2022", "exploit_status": "Active", "related_intel": ["State-sponsored actors exploiting in wild"]},
-    {"cve_id": "CVE-2024-00003", "severity": "HIGH", "score": 8.7, "software": "OpenSSH 9.x", "status": "Active", "date": "2024-02-20", "description": "Pre-authentication double-free vulnerability in sshd allowing remote code execution.", "affected_versions": "9.0 - 9.6", "exploit_status": "Proof of Concept", "related_intel": []},
-    {"cve_id": "CVE-2024-00004", "severity": "HIGH", "score": 8.3, "software": "Kubernetes kubelet", "status": "Patched", "date": "2024-03-01", "description": "Privilege escalation via kubelet API allowing node takeover.", "affected_versions": "1.24 - 1.28", "exploit_status": "Proof of Concept", "related_intel": ["Cloud security advisory published"]},
-    {"cve_id": "CVE-2024-00005", "severity": "MEDIUM", "score": 6.5, "software": "PostgreSQL 16", "status": "Patched", "date": "2024-03-12", "description": "SQL injection via pg_catalog functions in specific configurations.", "affected_versions": "16.0 - 16.2", "exploit_status": "None", "related_intel": []},
-    {"cve_id": "CVE-2024-00006", "severity": "CRITICAL", "score": 9.4, "software": "Fortinet FortiOS", "status": "Active", "date": "2024-03-28", "description": "Authentication bypass in SSL VPN portal allowing full device compromise.", "affected_versions": "7.0 - 7.4", "exploit_status": "Weaponized", "related_intel": ["Ransomware group actively exploiting Fortinet appliances"]},
-    {"cve_id": "CVE-2024-00007", "severity": "HIGH", "score": 8.0, "software": "Linux Kernel 6.x", "status": "Active", "date": "2024-04-05", "description": "Use-after-free in netfilter subsystem allowing local privilege escalation.", "affected_versions": "6.0 - 6.8", "exploit_status": "Proof of Concept", "related_intel": []},
-    {"cve_id": "CVE-2024-00008", "severity": "LOW", "score": 3.5, "software": "Node.js 20.x", "status": "Patched", "date": "2024-04-18", "description": "Denial of service via malformed HTTP/2 frames.", "affected_versions": "20.0 - 20.11", "exploit_status": "None", "related_intel": []},
-    {"cve_id": "CVE-2024-00009", "severity": "HIGH", "score": 7.8, "software": "VMware ESXi 8.0", "status": "Active", "date": "2024-05-02", "description": "Heap overflow in virtual USB controller allowing guest-to-host escape.", "affected_versions": "8.0 U1 - U2", "exploit_status": "Weaponized", "related_intel": ["Vulnerability chained with VMSA-2024-0012 in targeted attacks"]},
-    {"cve_id": "CVE-2024-00010", "severity": "MEDIUM", "score": 5.5, "software": "Redis 7.x", "status": "Patched", "date": "2024-05-14", "description": "Information disclosure via race condition in ACL parser.", "affected_versions": "7.0 - 7.2.4", "exploit_status": "None", "related_intel": []},
-    {"cve_id": "CVE-2024-00011", "severity": "CRITICAL", "score": 9.9, "software": "Splunk Enterprise 9.x", "status": "Active", "date": "2024-05-30", "description": "Pre-auth remote code execution via Python code injection in search parser.", "affected_versions": "9.0 - 9.2.1", "exploit_status": "Active", "related_intel": ["Nation-state actors targeting SIEM platforms", "CISA adds to KEV catalog"]},
-    {"cve_id": "CVE-2024-00012", "severity": "HIGH", "score": 7.5, "software": "Atlassian Confluence", "status": "Active", "date": "2024-06-10", "description": "Server-side template injection leading to remote code execution.", "affected_versions": "8.0 - 8.5.2", "exploit_status": "Proof of Concept", "related_intel": []},
-    {"cve_id": "CVE-2024-00013", "severity": "MEDIUM", "score": 6.1, "software": "Docker Engine 24.x", "status": "Patched", "date": "2024-06-22", "description": "Container escape via malicious overlayfs mount.", "affected_versions": "24.0 - 24.0.7", "exploit_status": "Proof of Concept", "related_intel": []},
-    {"cve_id": "CVE-2024-00014", "severity": "HIGH", "score": 8.8, "software": "Palo Alto PAN-OS", "status": "Active", "date": "2024-07-04", "description": "Command injection in management interface allowing firewall takeover.", "affected_versions": "10.0 - 11.1", "exploit_status": "Weaponized", "related_intel": ["Multiple APT groups scanning for vulnerable firewalls"]},
-    {"cve_id": "CVE-2024-00015", "severity": "LOW", "score": 2.8, "software": "MySQL 8.x", "status": "Patched", "date": "2024-07-15", "description": "Minor information disclosure via timing side-channel in authentication.", "affected_versions": "8.0 - 8.3", "exploit_status": "None", "related_intel": []},
-]
+PAGE_SIZE = 100
 
 
 class VulnDBPanel(QWidget):
@@ -39,12 +32,18 @@ class VulnDBPanel(QWidget):
         super().__init__()
         self.api_client = api_client
         self._vulns = []
+        self._stats = None
+        self._page = 1
+        self._total = 0
+        self._pages = 1
+        self._last_error = None
         self._nam = QNetworkAccessManager(self)
         self._nam.finished.connect(self._on_network_reply)
         self._setup_ui()
         self._connect_signals()
         self.refresh()
 
+    # ── UI ────────────────────────────────────────────────────────────
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -54,28 +53,46 @@ class VulnDBPanel(QWidget):
         title.setObjectName("SectionTitle")
         layout.addWidget(title)
 
+        subtitle = QLabel("NVD CVE 2.0  ·  CISA KNOWN EXPLOITED VULNERABILITIES")
+        subtitle.setStyleSheet("color:#475569; font-size:7pt; letter-spacing:2px;")
+        layout.addWidget(subtitle)
+
+        self.summary = QLabel("")
+        self.summary.setStyleSheet("color:#22d3ee; font-size:8pt; letter-spacing:1px;")
+        layout.addWidget(self.summary)
+
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search CVE, keyword...")
+        self.search_input.setPlaceholderText("Search CVE, vendor, product, CWE...")
         self.search_input.setStyleSheet("background:#0a0c12; border:1px solid #1a1e2e; color:#cbd5e1; padding:6px 12px; font-size:9pt;")
 
         self.severity_filter = QComboBox()
-        self.severity_filter.addItems(["All", "CRITICAL", "HIGH", "MEDIUM", "LOW"])
+        self.severity_filter.addItems(["All", "CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"])
         self.severity_filter.setStyleSheet("background:#0a0c12; border:1px solid #1a1e2e; color:#cbd5e1; padding:4px 8px; font-size:9pt;")
+
+        self.kev_only = QCheckBox("KEV ONLY")
+        self.kev_only.setStyleSheet("color:#ef4444; font-size:8pt; letter-spacing:1px; spacing:6px;")
 
         self.search_btn = QPushButton("SEARCH")
         self.search_btn.setStyleSheet("background:#1a1e2e; color:#f59e0b; border:1px solid #f59e0b; padding:6px 18px; font-weight:700; letter-spacing:1px;")
 
-        self.sync_btn = QPushButton("SYNC")
+        self.sync_btn = QPushButton("SYNC NVD + KEV")
         self.sync_btn.setStyleSheet("background:#1a1e2e; color:#22d3ee; border:1px solid #22d3ee; padding:6px 18px; font-weight:700; letter-spacing:1px;")
+        self.sync_btn.setToolTip("Fetch the live CISA KEV catalog and recent NVD CVEs now")
 
         toolbar.addWidget(self.search_input, 1)
         toolbar.addWidget(self.severity_filter)
+        toolbar.addWidget(self.kev_only)
         toolbar.addWidget(self.search_btn)
         toolbar.addWidget(self.sync_btn)
         layout.addLayout(toolbar)
+
+        self.status = QLabel("")
+        self.status.setStyleSheet("color:#64748b; font-size:8pt; letter-spacing:1px;")
+        self.status.setWordWrap(True)
+        layout.addWidget(self.status)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(1)
@@ -87,16 +104,18 @@ class VulnDBPanel(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["CVE ID", "Severity", "Score", "Affected Software", "Status", "Date"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setHorizontalHeaderLabels(["CVE ID", "Severity", "CVSS", "Affected Software", "Exploit", "Published"])
+        for col, mode in ((0, QHeaderView.ResizeMode.ResizeToContents),
+                          (1, QHeaderView.ResizeMode.ResizeToContents),
+                          (2, QHeaderView.ResizeMode.ResizeToContents),
+                          (3, QHeaderView.ResizeMode.Stretch),
+                          (4, QHeaderView.ResizeMode.ResizeToContents),
+                          (5, QHeaderView.ResizeMode.ResizeToContents)):
+            self.table.horizontalHeader().setSectionResizeMode(col, mode)
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setStyleSheet("""
             QTableWidget { background:#080a0e; border:1px solid #1a1e2e; color:#cbd5e1; font-size:8pt; }
             QTableWidget::item { padding:6px 8px; border-bottom:1px solid #1a1e2e; }
@@ -105,6 +124,19 @@ class VulnDBPanel(QWidget):
         """)
         self.table.itemSelectionChanged.connect(self._on_select)
         lt.addWidget(self.table, 1)
+
+        pager = QHBoxLayout()
+        self.prev_btn = QPushButton("◀ PREV")
+        self.next_btn = QPushButton("NEXT ▶")
+        for b in (self.prev_btn, self.next_btn):
+            b.setStyleSheet("background:#0a0c12; color:#94a3b8; border:1px solid #1a1e2e; padding:4px 12px; font-size:7pt; letter-spacing:1px;")
+        self.page_lbl = QLabel("")
+        self.page_lbl.setStyleSheet("color:#475569; font-size:7pt; letter-spacing:1px;")
+        pager.addWidget(self.prev_btn)
+        pager.addWidget(self.page_lbl)
+        pager.addWidget(self.next_btn)
+        pager.addStretch()
+        lt.addLayout(pager)
 
         splitter.addWidget(left)
 
@@ -116,15 +148,30 @@ class VulnDBPanel(QWidget):
         self._show_placeholder()
         splitter.addWidget(self.detail_panel)
 
-        splitter.setSizes([450, 350])
+        splitter.setSizes([560, 380])
         layout.addWidget(splitter, 1)
 
     def _connect_signals(self):
-        self.search_btn.clicked.connect(self._filter)
-        self.search_input.returnPressed.connect(self._filter)
-        self.severity_filter.currentIndexChanged.connect(self._filter)
-        self.sync_btn.clicked.connect(self._sync_from_server)
+        self.search_btn.clicked.connect(self.refresh)
+        self.search_input.returnPressed.connect(self.refresh)
+        self.search_input.textChanged.connect(self._debounce_search)
+        self.severity_filter.currentIndexChanged.connect(self.refresh)
+        self.kev_only.stateChanged.connect(self.refresh)
+        self.sync_btn.clicked.connect(self._run_sync)
+        self.prev_btn.clicked.connect(self._prev_page)
+        self.next_btn.clicked.connect(self._next_page)
+        self._search_timer = None
 
+    def _debounce_search(self):
+        from PyQt6.QtCore import QTimer
+        if self._search_timer is None:
+            self._search_timer = QTimer(self)
+            self._search_timer.setSingleShot(True)
+            self._search_timer.setInterval(400)
+            self._search_timer.timeout.connect(self.refresh)
+        self._search_timer.start()
+
+    # ── Detail panel ──────────────────────────────────────────────────
     def _show_placeholder(self):
         self._clear_detail()
         lbl = QLabel("SELECT A VULNERABILITY TO VIEW DETAILS")
@@ -139,165 +186,309 @@ class VulnDBPanel(QWidget):
                 w.setParent(None)
                 w.deleteLater()
 
-    def _filter(self):
-        try:
-            query = self.search_input.text().strip().lower()
-            severity = self.severity_filter.currentText()
-            filtered = []
-            for v in self._vulns:
-                if severity != "All" and v.get("severity", "") != severity:
-                    continue
-                if query:
-                    searchable = f"{v.get('cve_id', '')} {v.get('software', '')} {v.get('description', '')} {v.get('affected_versions', '')}".lower()
-                    if query not in searchable:
-                        continue
-                filtered.append(v)
-            self._render_table(filtered)
-        except Exception as e:
-            print(f"Vuln filter error: {e}")
-            self._render_table([])
+    def _field(self, label, value, color="#cbd5e1"):
+        lbl = QLabel(f"<b style='color:#64748b;'>{label}</b>  <span style='color:{color};'>{value}</span>")
+        lbl.setStyleSheet("font-size:8pt;")
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl.setWordWrap(True)
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self._detail_layout.addWidget(lbl)
 
-    def _render_table(self, vulns):
-        try:
-            self.table.setRowCount(0)
-            self.table.setRowCount(len(vulns))
-            for row, v in enumerate(vulns):
-                cve_id = v.get("cve_id", v.get("id", "UNKNOWN"))
-                severity = v.get("severity", v.get("risk_level", "UNKNOWN"))
-                score = v.get("score", v.get("cvss", "—"))
-                software = v.get("software", v.get("affected_software", "—"))
-                status = v.get("status", v.get("exploit_status", "Unknown"))
-                date = v.get("date", v.get("published", v.get("created_at", "")))[:10]
+    def _show_detail(self, v):
+        self._clear_detail()
 
-                cve_item = QTableWidgetItem(cve_id)
-                cve_item.setData(Qt.ItemDataRole.UserRole, row)
+        cve = v.get("cve_id", "UNKNOWN")
+        cve_lbl = QLabel(cve)
+        cve_lbl.setStyleSheet("font-size:16pt; font-weight:700; color:#f59e0b; letter-spacing:2px;")
+        self._detail_layout.addWidget(cve_lbl)
 
-                sev_item = QTableWidgetItem(severity)
-                sev_item.setForeground(QColor(SEVERITY_COLORS.get(severity, "#64748b")))
+        sev = (v.get("severity") or "UNKNOWN").upper()
+        sc = SEVERITY_COLORS.get(sev, "#64748b")
+        score = v.get("cvss_score")
+        score_txt = f"{score:.1f}" if isinstance(score, (int, float)) else "NOT RATED"
 
-                score_item = QTableWidgetItem(str(score))
+        badges = QHBoxLayout()
+        badges.setSpacing(6)
+        for text, colour in ((sev, sc), (score_txt, sc),
+                             (v.get("exploit_status") or "No Known Exploit",
+                              "#ef4444" if v.get("in_kev") else "#64748b")):
+            b = QLabel(text)
+            b.setStyleSheet(f"background:#1a1e2e; color:{colour}; border:1px solid {colour};"
+                            "font-size:7pt; font-weight:700; letter-spacing:1px; padding:3px 8px;")
+            badges.addWidget(b)
+        badges.addStretch()
+        self._detail_layout.addLayout(badges)
 
-                sw_item = QTableWidgetItem(software)
+        desc = (v.get("description") or "").strip()
+        if desc:
+            desc_lbl = QLabel(desc)
+            desc_lbl.setWordWrap(True)
+            desc_lbl.setStyleSheet("color:#cbd5e1; font-size:8pt;")
+            self._detail_layout.addWidget(desc_lbl)
 
-                status_item = QTableWidgetItem(status)
-                if status == "Active":
-                    status_item.setForeground(QColor("#ef4444"))
-                else:
-                    status_item.setForeground(QColor("#22d3ee"))
+        def separator():
+            sep = QFrame()
+            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setStyleSheet("border:1px solid #1a1e2e;")
+            self._detail_layout.addWidget(sep)
 
-                date_item = QTableWidgetItem(date)
+        separator()
 
-                items = [cve_item, sev_item, score_item, sw_item, status_item, date_item]
-                for col, item in enumerate(items):
-                    self.table.setItem(row, col, item)
-        except Exception as e:
-            print(f"Vuln render error: {e}")
+        vendor = v.get("vendor") or "—"
+        product = v.get("product") or "—"
+        self._field("VENDOR:", vendor)
+        self._field("PRODUCT:", product)
+        if v.get("affected_versions"):
+            self._field("AFFECTED VERSIONS:", v["affected_versions"])
+        if v.get("cvss_vector"):
+            self._field("CVSS VECTOR:", v["cvss_vector"], "#94a3b8")
+        if v.get("cwes"):
+            self._field("WEAKNESSES:", v["cwes"], "#a78bfa")
+        if v.get("published"):
+            self._field("PUBLISHED:", str(v["published"])[:19].replace("T", " "), "#94a3b8")
+        if v.get("vuln_status"):
+            self._field("NVD STATUS:", v["vuln_status"], "#94a3b8")
 
+        if v.get("in_kev"):
+            separator()
+            kev_title = QLabel("CISA KNOWN EXPLOITED VULNERABILITY")
+            kev_title.setStyleSheet("color:#ef4444; font-size:7pt; font-weight:700; letter-spacing:2px;")
+            self._detail_layout.addWidget(kev_title)
+            if v.get("kev_date_added"):
+                self._field("DATE ADDED:", v["kev_date_added"], "#ef4444")
+            if v.get("kev_due_date"):
+                self._field("REMEDIATION DUE:", v["kev_due_date"], "#ef4444")
+            if v.get("ransomware_use"):
+                colour = "#ef4444" if v["ransomware_use"] == "Known" else "#94a3b8"
+                self._field("RANSOMWARE USE:", v["ransomware_use"], colour)
+            if v.get("required_action"):
+                self._field("REQUIRED ACTION:", v["required_action"], "#fbbf24")
+
+        refs = []
+        if v.get("references_json"):
+            try:
+                refs = json.loads(v["references_json"])
+            except (json.JSONDecodeError, TypeError):
+                refs = []
+        if refs:
+            separator()
+            rtitle = QLabel("REFERENCES")
+            rtitle.setStyleSheet("color:#22d3ee; font-size:7pt; font-weight:700; letter-spacing:2px;")
+            self._detail_layout.addWidget(rtitle)
+            box = QTextEdit()
+            box.setReadOnly(True)
+            box.setPlainText("\n".join(refs[:12]))
+            box.setStyleSheet("background:#0a0c12; border:1px solid #1a1e2e; color:#94a3b8; font-size:7pt;")
+            box.setFixedHeight(110)
+            self._detail_layout.addWidget(box)
+
+        self._detail_layout.addStretch()
+
+    # ── Table ─────────────────────────────────────────────────────────
     def _on_select(self):
         rows = self.table.selectedItems()
         if not rows:
             self._show_placeholder()
             return
-        row_idx = rows[0].row()
-        row_data = rows[0].data(Qt.ItemDataRole.UserRole)
-        if row_data is None:
+        idx = rows[0].data(Qt.ItemDataRole.UserRole)
+        if idx is None or not (0 <= idx < len(self._vulns)):
+            self._show_placeholder()
             return
-        self._show_detail(self._vulns[row_data])
+        self._show_detail(self._vulns[idx])
 
-    def _show_detail(self, v):
-        self._clear_detail()
+    def _render_table(self, vulns):
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(vulns))
+        for row, v in enumerate(vulns):
+            cve_id = v.get("cve_id", "UNKNOWN")
+            sev = (v.get("severity") or "UNKNOWN").upper()
+            score = v.get("cvss_score")
+            score_txt = f"{score:.1f}" if isinstance(score, (int, float)) else "—"
 
-        cve_lbl = QLabel(v["cve_id"])
-        cve_lbl.setStyleSheet("font-size:16pt; font-weight:700; color:#f59e0b; letter-spacing:2px;")
-        self._detail_layout.addWidget(cve_lbl)
+            vendor = (v.get("vendor") or "").strip()
+            product = (v.get("product") or "").strip()
+            software = " — ".join(p for p in (vendor, product) if p) or "—"
 
-        sev_lbl = QLabel(v["severity"])
-        sc = SEVERITY_COLORS.get(v["severity"], "#64748b")
-        sev_lbl.setStyleSheet(f"background:#1a1e2e; color:{sc}; padding:4px 12px; font-size:8pt; font-weight:700; letter-spacing:2px; border:1px solid {sc};")
-        self._detail_layout.addWidget(sev_lbl)
+            exploit = "KEV" if v.get("in_kev") else (v.get("exploit_status") or "—")
+            published = (v.get("published") or "")[:10]
 
-        score_lbl = QLabel(f"CVSS Score: {v['score']}")
-        score_lbl.setStyleSheet("color:#94a3b8; font-size:9pt; font-weight:600;")
-        self._detail_layout.addWidget(score_lbl)
+            cve_item = QTableWidgetItem(cve_id)
+            cve_item.setData(Qt.ItemDataRole.UserRole, row)
+            if v.get("in_kev"):
+                cve_item.setForeground(QColor("#ef4444"))
+                cve_item.setToolTip("Confirmed exploited in the wild (CISA KEV)")
 
-        desc_lbl = QLabel(v["description"])
-        desc_lbl.setWordWrap(True)
-        desc_lbl.setStyleSheet("color:#cbd5e1; font-size:8pt; line-height:1.5;")
-        self._detail_layout.addWidget(desc_lbl)
+            sev_item = QTableWidgetItem(sev)
+            sev_item.setForeground(QColor(SEVERITY_COLORS.get(sev, "#64748b")))
 
-        sep1 = QFrame()
-        sep1.setFrameShape(QFrame.Shape.HLine)
-        sep1.setStyleSheet("border:1px solid #1a1e2e;")
-        self._detail_layout.addWidget(sep1)
+            score_item = QTableWidgetItem(score_txt)
 
-        aff_lbl = QLabel(f"<b style='color:#64748b;'>AFFECTED SOFTWARE:</b>  <span style='color:#cbd5e1;'>{v['software']}</span>")
-        aff_lbl.setStyleSheet("font-size:8pt;")
-        aff_lbl.setTextFormat(Qt.TextFormat.RichText)
-        self._detail_layout.addWidget(aff_lbl)
+            sw_item = QTableWidgetItem(software)
+            sw_item.setToolTip(software)
 
-        vers_lbl = QLabel(f"<b style='color:#64748b;'>AFFECTED VERSIONS:</b>  <span style='color:#cbd5e1;'>{v.get('affected_versions', 'N/A')}</span>")
-        vers_lbl.setStyleSheet("font-size:8pt;")
-        vers_lbl.setTextFormat(Qt.TextFormat.RichText)
-        self._detail_layout.addWidget(vers_lbl)
+            exploit_item = QTableWidgetItem(exploit)
+            exploit_item.setForeground(QColor("#ef4444" if v.get("in_kev") else "#64748b"))
 
-        exploit_status = v.get("exploit_status", "None")
-        esc = {"None": "#475569", "Proof of Concept": "#f59e0b", "Weaponized": "#ef4444", "Active": "#ef4444"}.get(exploit_status, "#64748b")
-        expl_lbl = QLabel(f"<b style='color:#64748b;'>EXPLOIT STATUS:</b>  <span style='color:{esc};font-weight:700;'>{exploit_status}</span>")
-        expl_lbl.setStyleSheet("font-size:8pt;")
-        expl_lbl.setTextFormat(Qt.TextFormat.RichText)
-        self._detail_layout.addWidget(expl_lbl)
+            date_item = QTableWidgetItem(published)
 
-        related = v.get("related_intel", [])
-        if related:
-            sep2 = QFrame()
-            sep2.setFrameShape(QFrame.Shape.HLine)
-            sep2.setStyleSheet("border:1px solid #1a1e2e;")
-            self._detail_layout.addWidget(sep2)
+            for col, item in enumerate([cve_item, sev_item, score_item, sw_item, exploit_item, date_item]):
+                self.table.setItem(row, col, item)
 
-            rel_title = QLabel("RELATED INTEL EVENTS")
-            rel_title.setStyleSheet("color:#22d3ee; font-size:7pt; font-weight:700; letter-spacing:2px;")
-            self._detail_layout.addWidget(rel_title)
+    def _update_summary(self, stats):
+        if not stats:
+            self.summary.setText("")
+            return
+        if not stats.get("configured"):
+            self.summary.setText("NO VULNERABILITY DATA — the server has not completed its first NVD/KEV sync")
+            return
+        sev = stats.get("by_severity") or {}
+        parts = [
+            f"{stats.get('total', 0):,} CVEs",
+            f"{sev.get('CRITICAL', 0)} CRITICAL",
+            f"{sev.get('HIGH', 0)} HIGH",
+            f"{stats.get('kev_count', 0):,} EXPLOITED IN THE WILD",
+            f"{stats.get('kev_ransomware', 0):,} RANSOMWARE",
+        ]
+        self.summary.setText("  ·  ".join(parts))
+        last = stats.get("last_nvd_sync") or stats.get("last_kev_sync")
+        if last:
+            self.summary.setToolTip(f"Last upstream sync: {last}")
 
-            for item in related:
-                rel_item = QLabel(f"  \u25b8  {item}")
-                rel_item.setStyleSheet("color:#94a3b8; font-size:8pt; padding-left:8px;")
-                self._detail_layout.addWidget(rel_item)
+    # ── Paging ────────────────────────────────────────────────────────
+    def _prev_page(self):
+        if self._page > 1:
+            self._page -= 1
+            self.refresh()
 
-        self._detail_layout.addStretch()
+    def _next_page(self):
+        if self._page < self._pages:
+            self._page += 1
+            self.refresh()
 
-    def _sync_from_server(self):
-        self.sync_btn.setEnabled(False)
-        self.sync_btn.setText("SYNCING...")
-        url = QUrl(f"{SERVER_URL}/api/intelligence/vulns")
+    def _update_pager(self, total, page, limit):
+        self._total = total or 0
+        self._pages = max(1, -(-self._total // limit)) if limit else 1
+        self._page = max(1, min(page or 1, self._pages))
+        self.page_lbl.setText(f"PAGE {self._page} / {self._pages}   ·   {self._total:,} MATCHING")
+        self.prev_btn.setEnabled(self._page > 1)
+        self.next_btn.setEnabled(self._page < self._pages)
+
+    # ── Networking ────────────────────────────────────────────────────
+    def _authed_request(self, url):
         req = QNetworkRequest(url)
-        if self.api_client.token:
-            req.setRawHeader(b"Authorization", f"Bearer {self.api_client.token}".encode())
-        self._nam.get(req)
-
-    def _on_network_reply(self, reply):
-        try:
-            self.sync_btn.setEnabled(True)
-            self.sync_btn.setText("SYNC")
-            if reply.error() == QNetworkReply.NetworkError.NoError:
-                try:
-                    raw = reply.readAll().data()
-                    data = json.loads(raw.decode("utf-8", errors="replace"))
-                    if isinstance(data, list):
-                        self._vulns = data
-                    else:
-                        self._vulns = data.get("vulns", data.get("results", []))
-                except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
-                    self._load_mock()
-            else:
-                self._load_mock()
-            self._filter()
-        except Exception as e:
-            print(f"VulnDB reply error: {e}")
-            self._load_mock()
-        reply.deleteLater()
-
-    def _load_mock(self):
-        self._vulns = MOCK_VULNS[:]
+        req.setRawHeader(b"Accept", b"application/json")
+        token = getattr(self.api_client, "token", None)
+        if token:
+            req.setRawHeader(b"Authorization", f"Bearer {token}".encode())
+        return req
 
     def refresh(self):
-        self._sync_from_server()
+        if self._search_timer is not None:
+            self._search_timer.stop()
+        params = [f"page={self._page}", f"limit={PAGE_SIZE}"]
+        sev = self.severity_filter.currentText()
+        if sev and sev != "All":
+            params.append(f"severity={sev}")
+        if self.kev_only.isChecked():
+            params.append("kev=1")
+        query = self.search_input.text().strip()
+        if query:
+            from urllib.parse import quote
+            params.append(f"q={quote(query)}")
+        url = QUrl(f"{SERVER_URL}/api/intelligence/vulns?{'&'.join(params)}")
+        self._nam.get(self._authed_request(url))
+
+    def _run_sync(self):
+        self.sync_btn.setEnabled(False)
+        self.sync_btn.setText("SYNCING...")
+        self._set_status(
+            "Contacting CISA KEV and NVD... the anonymous NVD limit is 5 requests "
+            "per 30s, so this takes up to a couple of minutes.")
+        url = QUrl(f"{SERVER_URL}/api/intelligence/vulns/sync")
+        self._nam.post(self._authed_request(url), b"")
+
+    def _on_network_reply(self, reply):
+        reply_url = reply.url().toString()
+        is_sync = reply_url.rstrip("/").endswith("/vulns/sync")
+        try:
+            if is_sync:
+                self.sync_btn.setEnabled(True)
+                self.sync_btn.setText("SYNC NVD + KEV")
+
+            if reply.error() != QNetworkReply.NetworkError.NoError:
+                self._fail(reply.errorString(), is_sync)
+                reply.deleteLater()
+                return
+
+            raw = reply.readAll().data()
+            try:
+                data = json.loads(raw.decode("utf-8", errors="replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as err:
+                self._fail(f"malformed response ({err})", is_sync)
+                reply.deleteLater()
+                return
+
+            if not isinstance(data, dict):
+                self._fail("unexpected response shape", is_sync)
+                reply.deleteLater()
+                return
+
+            if is_sync:
+                stats = data.get("stats") or {}
+                self._set_status(
+                    f"Synced {data.get('kev', 0):,} KEV entries and "
+                    f"{data.get('nvd', 0):,} NVD CVEs; "
+                    f"{data.get('backfilled', 0):,} KEV rows scored.")
+                self._update_summary(stats)
+                self._page = 1
+                self.refresh()
+                reply.deleteLater()
+                return
+
+            vulns = data.get("vulns")
+            if not isinstance(vulns, list):
+                self._fail("response contained no vulnerability list", False)
+                reply.deleteLater()
+                return
+
+            self._vulns = vulns
+            self._stats = data.get("stats")
+            self._update_summary(self._stats)
+            self._update_pager(data.get("total", len(vulns)), data.get("page", 1), data.get("limit", PAGE_SIZE))
+            self._render_table(vulns)
+            self._show_placeholder()
+
+            if not vulns:
+                self._last_error = None
+                if self._total == 0 and not (self._stats or {}).get("configured"):
+                    self._set_status(
+                        "No vulnerability data yet. The server syncs CISA KEV and NVD on boot "
+                        "and daily at 03:23 UTC — use SYNC NVD + KEV to fetch now.")
+                else:
+                    self._set_status("No vulnerabilities match the current filter.")
+            else:
+                self._last_error = None
+                self._set_status("")
+        except Exception as err:  # noqa: BLE001 - surface, never fabricate
+            self._fail(f"{type(err).__name__}: {err}", is_sync)
+        finally:
+            reply.deleteLater()
+
+    def _set_status(self, text, error=False):
+        self.status.setStyleSheet(
+            "color:#ef4444; font-size:8pt; letter-spacing:1px;" if error
+            else "color:#64748b; font-size:8pt; letter-spacing:1px;")
+        self.status.setText(text)
+
+    def _fail(self, message, is_sync):
+        """Report the failure. Never substitute invented vulnerability data."""
+        self._last_error = message
+        self._set_status(f"{'Sync failed' if is_sync else 'Load failed'}: {message}", error=True)
+        if not is_sync:
+            self._vulns = []
+            self._render_table([])
+            self._show_placeholder()
+            if self._total == 0:
+                self.page_lbl.setText("NO DATA")
+                self.prev_btn.setEnabled(False)
+                self.next_btn.setEnabled(False)
