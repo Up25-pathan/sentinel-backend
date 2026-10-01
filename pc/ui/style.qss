@@ -63,42 +63,55 @@ QMainWindow {
 #Sidebar {
     background-color: #0a0c12;
     border-right: 1px solid #1a1e2e;
-    min-width: 68px;
-    max-width: 68px;
+    min-width: 132px;
+    max-width: 132px;
 }
 
+/* Labels are left-aligned with a fixed indent so the text column lines up
+   regardless of label length. The previous rule centred 4pt abbreviations
+   next to glyph prefixes, which is why the column never lined up.
+
+   The rail overrides the app-wide monospace face. At 8.5pt monospace
+   "Exploitability" measures 158px, which forced a rail wide enough to eat
+   into the content area; a UI sans face fits the same text far narrower and
+   is easier to read as navigation rather than as data. */
 #Sidebar QPushButton {
-    font-size: 6.5pt;
-    letter-spacing: 1px;
-    padding: 3px 2px;
-    text-align: center;
-    border-left: 2px solid transparent;
+    font-family: 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 8.5pt;
+    letter-spacing: 0.2px;
+    /* Vertical padding is 0 and the height comes from min/max-height below.
+       Qt adds padding outside the declared height, so non-zero vertical
+       padding silently made every item 38px instead of the intended 28px. */
+    padding: 0px 10px 0px 14px;
+    text-align: left;
+    border-left: 3px solid transparent;
     border-right: none;
     border-top: none;
     border-bottom: none;
     border-radius: 0px;
-    color: #475569;
-    min-height: 26px;
-    max-height: 26px;
+    color: #8b9bb4;
+    /* Height is owned by RAIL_ITEM_H in shell/shell.py. Declaring it here as
+       well made Qt add the border on top of this value, so the two disagreed
+       and every row drifted a few pixels taller than intended. */
     background-color: transparent;
-    margin: 0px 2px;
+    margin: 1px 6px 1px 6px;
 }
 
 #Sidebar QPushButton:hover {
-    background-color: #11151f;
-    color: #94a3b8;
-    border-left: 2px solid #475569;
+    background-color: #131824;
+    color: #cbd5e1;
+    border-left: 3px solid #334155;
 }
 
 #Sidebar QPushButton:checked {
-    background-color: #11151f;
-    color: #f59e0b;
+    color: #f8fafc;
     font-weight: 700;
-    border-left: 2px solid #f59e0b;
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop: 0 #1a1510, stop: 1 #11151f);
+    border-left: 3px solid #f59e0b;
+    background-color: #1c1508;
 }
 
+/* The scroll area and its body must match the rail exactly. A mismatched
+   background here showed as a lighter vertical band down the sidebar. */
 #Sidebar #RailScroll, #Sidebar #RailScrollBody {
     background-color: #0a0c12;
     border: none;
@@ -106,14 +119,14 @@ QMainWindow {
 
 #Sidebar QScrollBar:vertical {
     background: #0a0c12;
-    width: 6px;
+    width: 8px;
     margin: 0px;
 }
 
 #Sidebar QScrollBar::handle:vertical {
-    background: #1a1e2e;
-    min-height: 20px;
-    border-radius: 2px;
+    background: #26303f;
+    min-height: 24px;
+    border-radius: 3px;
 }
 
 #Sidebar QScrollBar::add-line:vertical, #Sidebar QScrollBar::sub-line:vertical {
@@ -121,22 +134,27 @@ QMainWindow {
 }
 
 #Sidebar QLabel#SidebarTitle {
-    font-size: 8pt;
+    font-size: 9pt;
     font-weight: 700;
     color: #f59e0b;
-    letter-spacing: 4px;
-    padding: 10px 6px 2px 6px;
+    letter-spacing: 3px;
+    padding: 12px 8px 8px 8px;
     border-bottom: 1px solid #1a1e2e;
 }
 
+/* Group headings were #1e293b on #0a0c12 — nearly invisible. They now sit a
+   few steps above the item text so they read as headings, not as disabled
+   labels, and share the items' left indent. */
 #Sidebar QLabel#SidebarGroup {
-    font-size: 6pt;
-    font-weight: 600;
-    color: #1e293b;
+    font-size: 6.5pt;
+    font-weight: 700;
+    /* #64748b measured 4.11:1 here, under the 4.5:1 needed for small text.
+       #7c8ba1 clears it while staying quieter than the item labels. */
+    color: #7c8ba1;
     letter-spacing: 2px;
-    padding: 6px 0px 2px 0px;
-    margin: 4px 6px 0px 6px;
-    border-top: 1px solid #0f121a;
+    padding: 10px 0px 4px 0px;
+    margin: 8px 6px 2px 6px;
+    border-top: 1px solid #161b28;
     background: transparent;
 }
 

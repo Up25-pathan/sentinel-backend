@@ -119,16 +119,27 @@ function getIcon(risk) {
   return ICONS[risk] || ICONS.LOW;
 }
 
-// A 429 means the server's limiter is counting us. Retrying on the normal
-// interval just keeps the limiter engaged, so back off for the window the
-// server advertises instead of hammering it.
+// A 429 means the server's limiter is counting us. The deployed build allows
+// only 100 requests per 15 minutes for every route combined, so a map that
+// polls on three independent timers exhausts the budget by itself and every
+// layer comes back empty. Two changes:
+//   - one shared backoff instead of one per fetch, so layers stop each other
+//     from retrying into a limiter that is already engaged;
+//   - the server's own Retry-After is respected, even when it is longer than
+//     a minute. Clamping it to 120s guaranteed a 429 storm on every tick.
 var backoffUntil = 0;
+var backoffReason = '';
 
 function rateLimitedUntil(retryAfter) {
   var seconds = parseInt(retryAfter, 10);
-  if (isNaN(seconds) || seconds < 1) seconds = 30;
-  if (seconds > 120) seconds = 120;
+  if (isNaN(seconds) || seconds < 1) {
+    // Retry-After may be absent; fall back to the standard RateLimit-Reset
+    // delta if the server sent one.
+    seconds = 30;
+  }
+  if (seconds > 900) seconds = 900;
   backoffUntil = Date.now() + seconds * 1000;
+  backoffReason = 'SERVER RATE LIMIT — RESUMING IN ' + seconds + 'S';
   return seconds;
 }
 
@@ -137,28 +148,87 @@ function inBackoff() {
 }
 
 function backoffLeft() {
-  return Math.ceil((backoffUntil - Date.now()) / 1000);
+  return Math.max(1, Math.ceil((backoffUntil - Date.now()) / 1000));
 }
 
 function fetchJSON(url, headers) {
   if (inBackoff()) {
-    return Promise.reject(new Error('BACKOFF ' + backoffLeft() + 's'));
+    var err = new Error('BACKOFF');
+    err.isBackoff = true;
+    err.retryIn = backoffLeft();
+    return Promise.reject(err);
   }
   return fetch(url, headers).then(function(r) {
     if (r.status === 429) {
       rateLimitedUntil(r.headers.get('Retry-After'));
-      throw new Error('429 RATE LIMITED — RETRY IN ' + backoffLeft() + 'S');
+      var e = new Error('429');
+      e.isBackoff = true;
+      e.retryIn = backoffLeft();
+      throw e;
     }
     if (r.status === 401) {
-      throw new Error('401 SESSION EXPIRED — RE-LOGIN');
+      var u = new Error('401 SESSION EXPIRED — RE-LOGIN');
+      u.isAuth = true;
+      throw u;
     }
     if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
     return r.json();
   });
 }
 
+// Layer failures used to overwrite each other's status text, so the last
+// layer to answer was the only one visible and one dead endpoint could hide
+// a working one. Each layer stores its own state and the status bar renders
+// all three together.
+var LAYER_ORDER = [
+  { key: 'intel', label: 'INTEL' },
+  { key: 'aviation', label: 'AVIATION' },
+  { key: 'conflict', label: 'CONFLICT' },
+];
+
+var layerStates = {};
+
+function clearLayerState(layer) {
+  delete layerStates[layer];
+}
+
+function reportLayer(layer, ok, message, color) {
+  if (layerStates[layer] === message) return;
+  layerStates[layer] = { ok: ok, text: message };
+  renderLayerStatus();
+}
+
+function renderLayerStatus() {
+  var parts = [];
+  var anyBad = false;
+  var anyBackoff = false;
+  LAYER_ORDER.forEach(function(entry) {
+    var st = layerStates[entry.key];
+    if (!st) {
+      parts.push(entry.label + ' --');
+      return;
+    }
+    if (!st.ok) anyBad = true;
+    parts.push(st.text);
+  });
+  if (inBackoff()) {
+    anyBackoff = true;
+    parts.push('SERVER RATE LIMIT ' + backoffLeft() + 'S');
+  }
+  var color = (anyBad || anyBackoff) ? '#ef4444' : '#f59e0b';
+  var line = parts.join('  ·  ');
+  if (line !== STATUS.textContent) setStatus(line, color);
+}
+
+function noteBackoff() {
+  if (!inBackoff()) return false;
+  renderLayerStatus();
+  return true;
+}
+
 function loadMarkers() {
   if (!requireToken('Intel')) return;
+  if (noteBackoff()) return;
   setStatus('LOADING INTEL...', '#22d3ee');
   const headers = { 'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json' };
   fetchJSON(API_URL + '/api/map/markers', { headers: headers })
@@ -172,7 +242,7 @@ function loadMarkers() {
         const marker = L.marker([e.lat, e.lng], { icon: getIcon(e.risk_level) });
         marker.bindPopup(
           '<div class="popup-custom">'
-          + '<div class="cat">' + (e.is_breaking ? '&#9888; BREAKING &middot; ' : '') + (e.category || '') + '</div>'
+          + '<div class="cat">' + (e.is_breaking ? 'BREAKING &middot; ' : '') + (e.category || '') + '</div>'
           + '<h3>' + (e.title || 'Untitled') + '</h3>'
           + '<div class="loc">' + (e.location_name || '') + (e.country ? ' &middot; ' + e.country : '') + '</div>'
           + '<div class="summ">' + (e.summary || '').substring(0, 200) + '</div>'
@@ -181,16 +251,22 @@ function loadMarkers() {
         );
         intelLayer.addLayer(marker);
       });
-      setStatus(count + ' INTEL MARKERS', '#f59e0b');
+      clearLayerState('intel');
+      // Zero markers with a healthy response is a real answer, not an error,
+      // and the status must say so rather than implying the feed broke.
+      reportLayer('intel',
+        true,
+        count ? count + ' INTEL MARKERS' : 'INTEL: 0 MARKERS (NO COORDINATES)',
+        count ? '#f59e0b' : '#64748b');
     })
     .catch(function(err) {
-      console.error('Intel markers error:', err);
-      setStatus('INTEL OFFLINE: ' + err.message.substring(0, 40), '#ef4444');
+      if (err.isBackoff) { noteBackoff(); return; }
+      if (err.isAuth) { reportLayer('intel', false, err.message, '#ef4444'); return; }
+      reportLayer('intel', false, 'INTEL OFFLINE: ' + err.message.substring(0, 40), '#ef4444');
     });
 }
 
 var aircraftMarkers = {};
-var aircraftTimer = null;
 
 // Poll without a token is pointless and floods the log once per interval.
 function requireToken(label) {
@@ -204,12 +280,15 @@ function requireToken(label) {
 
 function loadAircraft() {
   if (!requireToken('Aircraft')) return;
+  if (noteBackoff()) return;
   fetchJSON(API_URL + '/api/map/aviation', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
     .then(function(data) {
       const now = Date.now();
+      let seen = 0;
       (data.aircraft || []).forEach(function(a) {
         if (!a.lat || !a.lng) return;
         const key = a.icao24 || (a.lat + ',' + a.lng);
+        seen++;
         if (aircraftMarkers[key]) {
           aircraftMarkers[key].setLatLng([a.lat, a.lng]);
           aircraftMarkers[key]._lastSeen = now;
@@ -226,7 +305,7 @@ function loadAircraft() {
           marker.bindPopup(
             '<div class="popup-custom">'
             + '<h3>' + (a.callsign || 'Unknown') + '</h3>'
-            + '<div class="loc">' + a.origin_country + '</div>'
+            + '<div class="loc">' + (a.origin_country || '') + '</div>'
             + '<div class="summ">Alt: ' + alt + ' | Speed: ' + spd + '</div>'
             + '</div>'
           );
@@ -241,28 +320,37 @@ function loadAircraft() {
           delete aircraftMarkers[key];
         }
       });
+      clearLayerState('aviation');
+      if (data.error) {
+        // The proxy answered honestly that the upstream feed is down.
+        reportLayer('aviation', false, 'AVIATION: ' + data.error.toUpperCase(), '#ef4444');
+      } else {
+        reportLayer('aviation', true,
+          seen ? seen + ' AIRCRAFT TRACKED' : 'AVIATION: 0 AIRCRAFT',
+          seen ? '#22d3ee' : '#64748b');
+      }
     })
     .catch(function(err) {
-      // Silence expected rate-limit waits; they are shown in the status bar
-      // and were the bulk of the console noise in the log.
-      if (String(err.message).indexOf('BACKOFF') !== 0) {
-        console.error('Aircraft load error:', err);
-      }
+      if (err.isBackoff) { noteBackoff(); return; }
+      if (err.isAuth) { reportLayer('aviation', false, err.message, '#ef4444'); return; }
+      reportLayer('aviation', false, 'AVIATION OFFLINE: ' + err.message.substring(0, 40), '#ef4444');
     });
 }
 
-function startAircraftUpdates() {
-  loadAircraft();
-  aircraftTimer = setInterval(loadAircraft, 30000);
-}
+// Aircraft polling is driven by the shared queue at the bottom of this
+// script. Keeping a second timer here ran the most expensive layer on its
+// own schedule, which is what exhausted the limiter.
 
 function loadConflicts() {
   if (!requireToken('Conflicts')) return;
+  if (noteBackoff()) return;
   fetchJSON(API_URL + '/api/map/conflicts', { headers: { 'Authorization': 'Bearer ' + TOKEN } })
     .then(function(data) {
       conflictLayer.clearLayers();
+      let placed = 0;
       (data.zones || []).forEach(function(zone) {
         if (!zone.coords || zone.coords.length < 3) return;
+        placed++;
         L.polygon(zone.coords, {
           color: zone.color || '#ef4444',
           fillColor: zone.color || '#ef4444',
@@ -278,6 +366,7 @@ function loadConflicts() {
       });
       (data.events || []).forEach(function(ev) {
         if (!ev.lat || !ev.lng) return;
+        placed++;
         const color = ev.severity === 'high' ? '#ef4444' : ev.severity === 'medium' ? '#f59e0b' : '#64748b';
         L.circleMarker([ev.lat, ev.lng], {
           radius: ev.severity === 'high' ? 6 : 4,
@@ -289,8 +378,16 @@ function loadConflicts() {
           + '</div>'
         ).addTo(conflictLayer);
       });
+      clearLayerState('conflict');
+      reportLayer('conflict', true,
+        placed ? placed + ' CONFLICT SIGNALS' : 'CONFLICT: 0 SIGNALS',
+        placed ? '#ef4444' : '#64748b');
     })
-    .catch(function(err) { console.error('Conflict zones error:', err); });
+    .catch(function(err) {
+      if (err.isBackoff) { noteBackoff(); return; }
+      if (err.isAuth) { reportLayer('conflict', false, err.message, '#ef4444'); return; }
+      reportLayer('conflict', false, 'CONFLICT OFFLINE: ' + err.message.substring(0, 40), '#ef4444');
+    });
 }
 
 const legend = L.control({ position: 'bottomright' });
@@ -308,12 +405,42 @@ legend.onAdd = function() {
 };
 legend.addTo(map);
 
+// Request budget. The deployed limiter allows 100 requests per 15 minutes
+// across every route, and the other panels are drawing on the same pool, so
+// the map runs at roughly 1 request per 45s. All three initial loads are
+// chained through a single queue instead of firing together, so a cold open
+// spends three requests at once and the first 429 never happens.
+var pending = [];
+var pumping = false;
+
+function enqueue(task) {
+  pending.push(task);
+  pump();
+}
+
+function pump() {
+  if (pumping || !pending.length) return;
+  if (inBackoff()) {
+    setTimeout(pump, Math.min(backoffLeft() * 1000, 5000));
+    return;
+  }
+  pumping = true;
+  const task = pending.shift();
+  let result;
+  try { result = task(); } catch (e) { result = null; }
+  const done = () => { pumping = false; setTimeout(pump, 400); };
+  if (result && typeof result.then === 'function') result.then(done, done);
+  else done();
+}
+
 setStatus('CONNECTING...', '#22d3ee');
-loadMarkers();
-loadConflicts();
-startAircraftUpdates();
-setInterval(loadMarkers, 30000);
-setInterval(loadConflicts, 300000);
+enqueue(loadMarkers);
+enqueue(loadConflicts);
+enqueue(loadAircraft);
+
+setInterval(function() { enqueue(loadMarkers); }, 60000);
+setInterval(function() { enqueue(loadConflicts); }, 300000);
+setInterval(function() { enqueue(loadAircraft); }, 60000);
 </script>
 </body>
 </html>"""

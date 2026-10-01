@@ -924,9 +924,18 @@ class DashboardPanel(QWidget):
         # server counts against its limiter and answered with 429. Wait for a
         # token instead, then load once per login.
         if not (getattr(self.api_client, "token", None) or ""):
-            self._status_label.setText("AUTH REQUIRED")
+            # This panel has no _status_label; the connection state is shown on
+            # the badge and the core ticker label. Referencing a widget that
+            # does not exist raised AttributeError from showEvent on startup.
+            self.badge.setText("AUTH REQUIRED")
+            self.badge.setStyleSheet(
+                "background:#1a1e2e; color:#f59e0b; font-size:7pt; letter-spacing:1px; padding:0 10px;")
+            self.badge.setToolTip("Log in to start the live feed")
+            self.core_lbl.setText("●  NOVA CORE  ·  AUTH REQUIRED")
+            self.core_lbl.setStyleSheet(
+                "color:#f59e0b; font-size:9pt; font-weight:700; letter-spacing:2px;")
             return
-        self._status_label.setText("LIVE")
+        self.badge.setText("LIVE FEED")
         self._request(f"{SERVER_URL}/api/intelligence/dashboard", self._on_dashboard)
         self._request(f"{SERVER_URL}/api/health", self._on_health)
 

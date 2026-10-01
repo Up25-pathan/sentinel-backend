@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
-from utils.api_client import SERVER_URL
+from utils.api_client import SERVER_URL, describe_http_error
 
 
 class LoginDialog(QDialog):
@@ -98,6 +98,7 @@ class LoginDialog(QDialog):
         user = self.username.text().strip()
         pw = self.password.text()
         if not user or not pw:
+            self.error_lbl.setStyleSheet("color: #ef4444; font-size: 10px;")
             self.error_lbl.setText("Enter username and password")
             return
 
@@ -115,13 +116,29 @@ class LoginDialog(QDialog):
     def _on_login_reply(self, reply):
         self.login_btn.setEnabled(True)
         if reply.error() != QNetworkReply.NetworkError.NoError:
-            err = reply.errorString()
-            if "refused" in err.lower() or "unreachable" in err.lower() or "connection" in err.lower():
-                self.error_lbl.setStyleSheet("color: #ef4444; font-size: 10px;")
+            # Qt turns an HTTP 401 into its own transport error, and the
+            # resulting "Host requires authentication" contains the word
+            # "authentication", so it used to be reported as a connection
+            # failure. The server's JSON body has the real reason.
+            err = describe_http_error(reply)
+            low = err.lower()
+            self.error_lbl.setStyleSheet("color: #ef4444; font-size: 10px;")
+            # Status-specific cases first. The generic reachability test has to come
+            # last, because Qt's wording for a rejected login mentions
+            # "authentication" and a proxy message can mention "connection",
+            # both of which are false positives for an unreachable server.
+            if "429" in err:
+                self.error_lbl.setText("Too many attempts - wait before retrying")
+            elif "invalid credentials" in low:
+                self.error_lbl.setText("Invalid credentials")
+            elif "not configured" in low:
+                self.error_lbl.setText("Server auth not configured")
+            elif any(w in low for w in ("refused", "unreachable", "timed out",
+                                        "timeout", "no such host", "not found")):
                 self.error_lbl.setText("Server unreachable")
             else:
-                self.error_lbl.setStyleSheet("color: #ef4444; font-size: 10px;")
-                self.error_lbl.setText(f"Connection error: {err[:50]}")
+                self.error_lbl.setText(err[:80])
+            self.error_lbl.setToolTip(err)
             reply.deleteLater()
             return
 

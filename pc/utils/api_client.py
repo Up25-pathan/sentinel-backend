@@ -7,6 +7,60 @@ from PyQt6.QtCore import QUrl
 
 SERVER_URL = os.getenv("SENTINEL_SERVER", "https://sentinel-backend-oc7g.onrender.com")
 
+
+def read_error_body(reply, fallback=""):
+    """Return the server's own error message for an HTTP error response.
+
+    Qt maps HTTP status codes onto its own error enum, so a rejected login
+    comes back as "Host requires authentication" no matter what the server
+    said. The real reason is always in the JSON body, which has to be read
+    before the reply is discarded.
+
+    Returns the fallback unchanged if there is no usable body.
+    """
+    try:
+        raw = bytes(reply.readAll().data()).decode("utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        return fallback
+    if not raw.strip():
+        return fallback
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        # A proxy or the hosting platform can answer with an HTML error page,
+        # which is noise in a small status label.
+        if raw.lstrip()[:1] in ("<", "{"):
+            return fallback
+        return raw.strip()[:120]
+    if isinstance(parsed, dict):
+        for key in ("error", "message", "msg"):
+            value = parsed.get(key)
+            if value:
+                return str(value)
+    return fallback
+
+
+def describe_http_error(reply, fallback=None):
+    """Human-readable one-liner for a failed request.
+
+    Prefers the server's message, and falls back to the HTTP status when Qt
+    only has its own generic transport wording to offer.
+    """
+    if fallback is None:
+        fallback = reply.errorString()
+    status = reply.attribute(
+        QNetworkRequest.Attribute.HttpStatusCodeAttribute
+    )
+    message = read_error_body(reply, "")
+    if message:
+        if status:
+            return f"{message} (HTTP {status})"
+        return message
+    if status:
+        return f"HTTP {status}: {fallback}"
+    return fallback
+
+
 class ApiClient(QObject):
     dashboardDataReady = pyqtSignal(dict)
     eventsDataReady = pyqtSignal(dict)
@@ -33,7 +87,10 @@ class ApiClient(QObject):
         self._sse_retries = 0
         self._sse_waiting_for_auth = False
 
-    def login(self, username="admin", password="intel2024"):
+    # No password default. The old "intel2024" placeholder was never a real
+    # credential, so it made a wrong password look like a configured one.
+    # The login dialog is the only supported way in.
+    def login(self, username="admin", password=""):
         url = QUrl(f"{SERVER_URL}/api/auth/login")
         req = QNetworkRequest(url)
         req.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
@@ -188,7 +245,9 @@ class ApiClient(QObject):
             return
 
         if reply.error() != QNetworkReply.NetworkError.NoError:
-            error_msg = reply.errorString()
+            # Qt reports HTTP-level rejections as its own transport errors, so
+            # read the body's message instead of surfacing Qt's wording.
+            error_msg = describe_http_error(reply)
             if tag not in ("login", "sse"):
                 self.errorOccurred.emit(f"API error ({tag}): {error_msg}")
             elif tag == "login":

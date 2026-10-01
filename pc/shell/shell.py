@@ -12,7 +12,9 @@ import traceback
 from datetime import datetime
 
 from PyQt6.QtCore import QTimer, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPixmap
+from PyQt6.QtGui import (
+    QAction, QColor, QFontMetrics, QIcon, QKeySequence, QPixmap,
+)
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QProgressBar,
@@ -65,8 +67,20 @@ def excepthook(exc_type, exc_value, exc_tb):
     sys.__excepthook__(exc_type, exc_value, exc_tb)
 
 
+# Qt adds the 3px left border outside the height declared in the stylesheet, so
+# a 28px rule renders as 30px. This matches the rendered height, which is what
+# the row spacing below is calculated from.
+RAIL_ITEM_H = 30
+# Horizontal space an item spends on: stylesheet padding (14 left + 10 right),
+# button side margins (6 + 6) and the vertical scrollbar (8). Mirrors
+# ui/style.qss; used only to size the rail, never to lay out an item.
+RAIL_CHROME = 14 + 10 + 12 + 8
+RAIL_MIN_W = 104
+RAIL_MAX_W = 260
+
+
 class NavRail(QWidget):
-    """Compact icon rail with grouped sections."""
+    """Text rail with grouped sections."""
 
     navigationChanged = pyqtSignal(str)
 
@@ -74,8 +88,8 @@ class NavRail(QWidget):
         """items: list of (key, icon, short_label, tooltip) or ("__group", None, LABEL, None)."""
         super().__init__(parent)
         self.setObjectName("Sidebar")
-        self.setFixedWidth(68)
         self.buttons = {}
+        self._items = items
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -95,7 +109,6 @@ class NavRail(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setFixedWidth(68)
 
         holder = QWidget()
         holder.setObjectName("RailScrollBody")
@@ -107,12 +120,22 @@ class NavRail(QWidget):
             if key == "__group":
                 separator = QLabel(short)
                 separator.setObjectName("SidebarGroup")
-                separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 body.addWidget(separator)
                 continue
-            btn = RailItem(f"{icon}{short}")
+            # The icon field is kept in the tuple for compatibility but is not
+            # drawn: glyph prefixes rendered at wildly different sizes and read
+            # as decoration rather than information.
+            #
+            # A plain QPushButton is used rather than a focus-stripping wrapper.
+            # The wrapper sized its inner button from its own rect, which left
+            # the button at its 100px default while the wrapper grew, so labels
+            # clipped no matter how wide the rail was. Focus is removed directly.
+            btn = QPushButton(short)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setCheckable(True)
+            btn.setFixedHeight(RAIL_ITEM_H)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(tooltip or "")
-            btn.setFixedHeight(26)
             btn.clicked.connect(lambda _checked=False, k=key: self.select(k))
             body.addWidget(btn)
             self.buttons[key] = btn
@@ -120,52 +143,50 @@ class NavRail(QWidget):
         body.addStretch()
         scroll.setWidget(holder)
         outer.addWidget(scroll, 1)
+        self._scroll = scroll
+
+        # Sized here so the rail is never left at the layout default, which is
+        # several hundred pixels wide.
+        self.resize_to_labels()
+
+    def resize_to_labels(self):
+        """Set the rail width from the real button metrics.
+
+        Called once while building and again after the stylesheet has been
+        polished. Font resolution changes between those points, so a single
+        measurement is either taken against the app-wide default face (too
+        narrow) or against the final one (correct); measuring twice converges
+        instead of guessing.
+        """
+        if not self.buttons:
+            return
+        metrics = QFontMetrics(next(iter(self.buttons.values())).font())
+        longest = max(
+            (metrics.horizontalAdvance(b.text()) for b in self.buttons.values()),
+            default=0,
+        )
+        width = max(RAIL_MIN_W, min(longest + RAIL_CHROME, RAIL_MAX_W))
+        self.setFixedWidth(width)
+        self._scroll.setFixedWidth(width)
+        # widgetResizable resizes the holder to the viewport, but the holder's
+        # minimum size hint comes from the group labels and kept it far wider
+        # than the rail. That mismatch is what made the scroll background show
+        # as a band wider than the sidebar, so the floor is cleared.
+        holder = self._scroll.widget()
+        holder.setMinimumWidth(0)
+        holder.setFixedWidth(width)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Second pass: by show time the stylesheet is polished and the metrics
+        # are final.
+        self.resize_to_labels()
 
     def select(self, key):
         """Highlight `key` and announce the navigation."""
         for candidate, item in self.buttons.items():
             item.setChecked(candidate == key)
         self.navigationChanged.emit(key)
-
-
-class RailItem(QWidget):
-    """A rail entry that never takes keyboard focus.
-
-    A plain QPushButton in a rail sits in the focus chain, so Space and the
-    arrow keys move selection even when the user meant to scroll or type. The
-    button is kept but focus and tab participation are removed, so the rail is
-    driven by the window's Ctrl+N shortcuts instead.
-    """
-
-    def __init__(self, text, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet("background: transparent;")
-        self._btn = QPushButton(text, self)
-        self._btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._btn.setCheckable(True)
-        self._btn.setFixedHeight(26)
-        self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def setToolTip(self, text):
-        self._btn.setToolTip(text)
-
-    def setFixedHeight(self, value):
-        self._btn.setFixedHeight(value)
-        QWidget.setFixedHeight(self, value)
-
-    def setChecked(self, value):
-        self._btn.setChecked(value)
-
-    def isChecked(self):
-        return self._btn.isChecked()
-
-    @property
-    def clicked(self):
-        return self._btn.clicked
-
-    def resizeEvent(self, event):
-        self._btn.setGeometry(self.rect())
-        super().resizeEvent(event)
 
 
 class ShellWindow(QMainWindow):

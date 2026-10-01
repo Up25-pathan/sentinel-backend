@@ -9,34 +9,39 @@ Run it with:  python sentinel_ui.py
 
 __version__ = "3.0.0"
 __app_name__ = "SENTINEL"
+# The second field is a glyph prefix and is now empty on purpose. The rail used
+# to prefix each label with a symbol (▶, ♁, ☢, ⚔ …), which rendered at wildly
+# different sizes and weights depending on the font and read as decoration
+# rather than information. Labels are plain text and the rail is wide enough to
+# spell them out.
 __nav_items__ = [
     ("__group", None, "INTEL", None),
-    ("dashboard", "▶", "DASH", "Dashboard — live posture and risk"),
-    ("intel", "♁", "INTL", "Intel Events"),
-    ("osint_feed", "☆", "OSNT", "OSINT Feeds"),
-    ("darkweb", "☢", "DWEB", "Dark Web"),
-    ("alerts", "⚠", "ALRT", "Alerts"),
+    ("dashboard", "", "Dashboard", "Live posture and risk"),
+    ("intel", "", "Intel Events", "Tracked events and campaigns"),
+    ("osint_feed", "", "OSINT Feeds", "Open-source intelligence feeds"),
+    ("darkweb", "", "Dark Web", "Stored dark web signals"),
+    ("alerts", "", "Alerts", "Active alerts"),
     ("__group", None, "ANALYSIS", None),
-    ("map", "☰", "MAP", "Geo Map"),
-    ("chat", "✉", "CHAT", "AI Chat"),
-    ("feeds", "⚐", "THRT", "Threat Feeds"),
-    ("timeline", "⧖", "TIME", "Timeline"),
+    ("map", "", "Geo Map", "Geopolitical map, conflicts and aviation"),
+    ("chat", "", "AI Chat", "Groq-backed analyst chat"),
+    ("feeds", "", "Threat Feeds", "Upstream feed health"),
+    ("timeline", "", "Timeline", "Event timeline"),
     ("__group", None, "ASSURANCE", None),
-    ("vulndb", "⚛", "VULN", "Vuln Database — NVD and CISA KEV"),
-    ("export", "⇩", "RPRT", "Export / Reports"),
-    ("audit", "✓", "AUDT", "Audit Log"),
+    ("vulndb", "", "Vuln Database", "NVD and CISA KEV"),
+    ("export", "", "Reports", "Export and reports"),
+    ("audit", "", "Audit Log", "Action audit log"),
     ("__group", None, "ENGAGE", None),
-    ("recon", "◎", "RCON", "Reconnaissance — hosts, DNS and ports"),
-    ("web", "⚯", "WEB", "Web inspection — HTTP, headers and TLS"),
-    ("privesc", "⇧", "PRIV", "Privilege escalation — local posture audit"),
-    ("osint", "◉", "OSIG", "OSINT — WHOIS, DNS and subdomains"),
-    ("wifi", "≋", "WIFI", "Wireless — local adapter inventory"),
-    ("exploit", "⚠", "EXPL", "Exploitability — read-only CVE assessment"),
+    ("recon", "", "Recon", "Hosts, DNS and open ports"),
+    ("web", "", "Web Inspect", "HTTP, headers and TLS"),
+    ("privesc", "", "Priv Esc", "Local privilege escalation audit"),
+    ("osint", "", "OSINT Scan", "WHOIS, DNS and subdomains"),
+    ("wifi", "", "Wireless", "Local adapter inventory"),
+    ("exploit", "", "Exploitability", "Read-only CVE assessment"),
     ("__group", None, "OPERATE", None),
-    ("redops", "⚔", "OPS", "Red Ops — jobs, Docker and VM inventory"),
-    ("scanner", "⬝", "SCAN", "Network Scanner — measured port probing"),
-    ("campaign", "⬜", "CAMP", "Campaigns — MITRE ATT&CK attack paths"),
-    ("assets", "⚙", "ASST", "Assets — tracked infrastructure"),
+    ("redops", "", "Red Ops", "Jobs, Docker and VM inventory"),
+    ("scanner", "", "Network Scan", "Measured port probing"),
+    ("campaign", "", "Campaigns", "MITRE ATT&CK attack paths"),
+    ("assets", "", "Assets", "Tracked infrastructure"),
 ]
 __panel_keys__ = [
     # intel and reporting
