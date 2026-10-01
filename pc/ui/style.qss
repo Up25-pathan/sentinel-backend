@@ -99,6 +99,27 @@ QMainWindow {
         stop: 0 #1a1510, stop: 1 #11151f);
 }
 
+#Sidebar #RailScroll, #Sidebar #RailScrollBody {
+    background-color: #0a0c12;
+    border: none;
+}
+
+#Sidebar QScrollBar:vertical {
+    background: #0a0c12;
+    width: 6px;
+    margin: 0px;
+}
+
+#Sidebar QScrollBar::handle:vertical {
+    background: #1a1e2e;
+    min-height: 20px;
+    border-radius: 2px;
+}
+
+#Sidebar QScrollBar::add-line:vertical, #Sidebar QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
 #Sidebar QLabel#SidebarTitle {
     font-size: 8pt;
     font-weight: 700;

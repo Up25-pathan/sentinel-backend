@@ -1,139 +1,19 @@
-"""REDLAB application window and entry point.
+"""Compatibility shim for the old REDLAB entrypoint.
 
-REDLAB is a standalone app: python -m redlab. It shares only the shell chrome
-and the audit log with SENTINEL CIC, and never opens the CIC panels.
+REDLAB is no longer a separate application: the offensive tooling sits in the
+ENGAGE and OPERATE sections of the single SENTINEL rail, in sentinel_ui.py.
+This module forwards to it so anything importing `redlab.app.main` still gets
+the unified window rather than a second shell.
+
+The REDLAB panels themselves live alongside this file and are still built by
+sentinel_ui.SentinelWindow.
 """
 
-import sys
+from sentinel_ui import main
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QDialog
-
-import redlab
-from redlab.panels.assets import AssetsPanel
-from redlab.panels.campaigns import CampaignsPanel
-from redlab.panels.network_scanner import NetworkScannerPanel
-from redlab.panels.redops import RedOpsPanel
-from redlab.panels.tools import ToolPanel
-from shell import ShellWindow, excepthook
-from utils import audit
-from utils.api_client import ApiClient, SERVER_URL
-
-
-class RedLabWindow(ShellWindow):
-    def __init__(self):
-        super().__init__(
-            title=redlab.__app_name__,
-            version=redlab.__version__,
-            nav_items=redlab.__nav_items__,
-            nav_title="REDLAB",
-            subtitle="OFFENSIVE OPS",
-            client_factory=ApiClient,
-        )
-        audit.log_action("REDLAB_START", f"{redlab.__app_name__} v{redlab.__version__}")
-        self.api_client.loginResult.connect(self._on_login)
-        self._health_nam = None
-        self._health_reply = None
-        self.on_startup()
-
-    def build_panels(self):
-        # Each tool gets a rail entry, so the sidebar names the actual tooling
-        # instead of hiding all six behind a single OPS tab.
-        tool_blurbs = {
-            "recon": "Discovers live hosts, resolves DNS and probes open ports on a "
-                     "target you are authorised to assess.",
-            "web": "Fetches a target over HTTP and reports the response, headers, "
-                   "TLS certificate and anything the page exposes.",
-            "privesc": "Audits the local host for misconfiguration that would allow "
-                       "privilege escalation. Read-only: nothing is modified.",
-            "osint": "Looks up WHOIS registration, DNS records and discoverable "
-                     "subdomains for a domain using public sources.",
-            "wifi": "Inventories local wireless interfaces and the networks in "
-                    "range, as reported by the OS.",
-            "exploit": "Identifies service banners and matches them against a CVE "
-                       "corpus to report exploitability. Authorised targets only. "
-                       "Assessment only — no payload is delivered or executed.",
-        }
-        tool_colors = {
-            "recon": "#22d3ee", "web": "#f59e0b", "privesc": "#ef4444",
-            "osint": "#22d3ee", "wifi": "#f59e0b", "exploit": "#ef4444",
-        }
-        panels = {}
-        for key, (name, title, prompt, script, flag) in redlab.__tool_defs__.items():
-            panels[key] = ToolPanel(
-                key=key, name=name, title=title, prompt_label=prompt,
-                script_name=script, accent=tool_colors[key],
-                blurb=tool_blurbs[key], value_flag=flag,
-            )
-        panels.update({
-            "redops": RedOpsPanel(),
-            "scanner": NetworkScannerPanel(),
-            "campaign": CampaignsPanel(),
-            "assets": AssetsPanel(),
-        })
-        self.panels = panels
-        self.panel_keys = list(redlab.__panel_keys__)
-        for key in self.panel_keys:
-            self.content.addWidget(self.panels[key])
-
-    def on_startup(self):
-        # REDLAB works against targets directly, so it does not require an
-        # authenticated CIC session to be useful. It still reports backend
-        # reachability so an operator knows whether audit events will persist.
-        self.set_connection(False, "checking")
-        from PyQt6.QtCore import QTimer
-        QTimer.singleShot(300, self._check_server)
-
-    def _on_login(self, ok, message):
-        host = SERVER_URL.replace("https://", "").replace("http://", "")
-        self.set_connection(ok, "" if ok else message)
-        if ok:
-            self._set_status("REDLAB ONLINE — AUDIT LOGGING ACTIVE")
-        elif "connection" in message.lower() or "refused" in message.lower():
-            self._set_status("BACKEND OFFLINE — LOCAL OPS UNAFFECTED", error=True)
-        else:
-            self._set_status(f"BACKEND AUTH: {message[:50]}", error=True)
-
-    def _check_server(self):
-        from PyQt6.QtCore import QUrl
-        from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
-        if self._health_nam is None:
-            self._health_nam = QNetworkAccessManager(self)
-        self._health_timer = getattr(self, "_health_timer", None)
-        request = QNetworkRequest(QUrl(f"{SERVER_URL}/api/health"))
-        self._health_reply = self._health_nam.get(request)
-
-        def done():
-            reply = self._health_reply
-            self._health_reply = None
-            if reply is None:
-                return
-            try:
-                if reply.error() == QNetworkReply.NetworkError.NoError:
-                    self.set_connection(True)
-                    self._set_status("REDLAB ONLINE — AUDIT LOGGING ACTIVE")
-                else:
-                    self.set_connection(False, reply.errorString()[:28])
-                    self._set_status("BACKEND OFFLINE — LOCAL OPS UNAFFECTED", error=True)
-            finally:
-                reply.deleteLater()
-
-        self._health_reply.finished.connect(done)
-
-    def closeEvent(self, event):
-        audit.log_action("REDLAB_STOP", "Red Lab closed")
-        super().closeEvent(event)
-
-
-def main():
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    sys.excepthook = excepthook
-    window = RedLabWindow()
-    window.show()
-    return app.exec()
-
+__all__ = ["main"]
 
 if __name__ == "__main__":
+    import sys
+
     sys.exit(main())

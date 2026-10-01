@@ -15,8 +15,9 @@ from PyQt6.QtCore import QTimer, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPixmap
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import (
-    QApplication, QHBoxLayout, QLabel, QMainWindow, QProgressBar, QPushButton,
-    QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget,
+    QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QProgressBar,
+    QPushButton, QScrollArea, QStackedWidget, QSystemTrayIcon, QVBoxLayout,
+    QWidget,
 )
 
 from utils import system_monitor
@@ -85,21 +86,40 @@ class NavRail(QWidget):
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(label)
 
+        # The merged app lists every panel of both halves, which is taller than
+        # the window at its minimum size. Without this the lower entries were
+        # simply unreachable.
+        scroll = QScrollArea()
+        scroll.setObjectName("RailScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setFixedWidth(68)
+
+        holder = QWidget()
+        holder.setObjectName("RailScrollBody")
+        body = QVBoxLayout(holder)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+
         for key, icon, short, tooltip in items:
             if key == "__group":
                 separator = QLabel(short)
                 separator.setObjectName("SidebarGroup")
                 separator.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                outer.addWidget(separator)
+                body.addWidget(separator)
                 continue
             btn = RailItem(f"{icon}{short}")
             btn.setToolTip(tooltip or "")
             btn.setFixedHeight(26)
             btn.clicked.connect(lambda _checked=False, k=key: self.select(k))
-            outer.addWidget(btn)
+            body.addWidget(btn)
             self.buttons[key] = btn
 
-        outer.addStretch()
+        body.addStretch()
+        scroll.setWidget(holder)
+        outer.addWidget(scroll, 1)
 
     def select(self, key):
         """Highlight `key` and announce the navigation."""

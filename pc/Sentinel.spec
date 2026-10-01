@@ -1,47 +1,48 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for both SENTINEL applications.
+"""PyInstaller spec for SENTINEL.
 
-Two executables are produced from one analysis: SENTINEL CIC (reporting) and
-SENTINEL REDLAB (offensive operations). They share the shell, the audit log and
-the stylesheet, so those are bundled into both.
+One executable. The intelligence panels and the offensive tooling used to be
+built as two separate executables from two analyses; they are now a single
+window, so they ship together and share the shell, the audit log and the
+stylesheet.
 """
 
 import os
 
 PC_ROOT = os.path.abspath(os.getcwd())
 
-COMMON_HIDDEN = [
+HIDDEN = [
     'ui.login_dialog',
     'matplotlib.backends.backend_qtagg',
-    # REDLAB shells out to its own job scripts as subprocesses, so PyInstaller
-    # cannot see the import edge.
+    # Job scripts are launched as subprocesses via sys.executable, so
+    # PyInstaller cannot see the import edge.
     'redlab.utils.workers',
     'redlab.utils.net_scanner',
 ]
 
-a_cic = Analysis(
-    # cic_ui.py, not redlab_ui.py. redlab_ui.py now launches REDLAB, so
-    # building CIC from it would ship the reporting app wearing the offensive
-    # app's filename.
-    [os.path.join(PC_ROOT, 'cic_ui.py')],
+a = Analysis(
+    [os.path.join(PC_ROOT, 'sentinel_ui.py')],
     pathex=[PC_ROOT],
     binaries=[],
     datas=[
         (os.path.join(PC_ROOT, 'ui', 'style.qss'), 'ui'),
+        # Job scripts run as subprocesses, so they must ship as data files
+        # rather than be bundled as importable modules.
+        (os.path.join(PC_ROOT, 'redlab', 'bin'), 'redlab/bin'),
     ],
-    hiddenimports=COMMON_HIDDEN,
+    hiddenimports=HIDDEN,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['redlab'],
+    excludes=[],
     noarchive=False,
     optimize=0,
 )
-pyz_cic = PYZ(a_cic.pure)
+pyz = PYZ(a.pure)
 
-exe_cic = EXE(
-    pyz_cic,
-    a_cic.scripts,
+exe = EXE(
+    pyz,
+    a.scripts,
     [],
     exclude_binaries=True,
     name='Sentinel',
@@ -56,61 +57,13 @@ exe_cic = EXE(
     codesign_identity=None,
     entitlements_file=None,
 )
-coll_cic = COLLECT(
-    exe_cic,
-    a_cic.binaries,
-    a_cic.datas,
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='SentinelCIC',
-)
-
-b_redlab = Analysis(
-    # redlab_ui.py is the REDLAB entrypoint people run by hand, so the built
-    # executable should come from exactly that file rather than __main__.py.
-    [os.path.join(PC_ROOT, 'redlab_ui.py')],
-    pathex=[PC_ROOT],
-    binaries=[],
-    datas=[
-        (os.path.join(PC_ROOT, 'ui', 'style.qss'), 'ui'),
-        # Job scripts run as subprocesses via sys.executable, so they must be
-        # shipped as data files rather than bundled as modules.
-        (os.path.join(PC_ROOT, 'redlab', 'bin'), 'redlab/bin'),
-    ],
-    hiddenimports=COMMON_HIDDEN,
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=['ui.panels'],
-    noarchive=False,
-    optimize=0,
-)
-pyz_redlab = PYZ(b_redlab.pure)
-
-exe_redlab = EXE(
-    pyz_redlab,
-    b_redlab.scripts,
-    [],
-    exclude_binaries=True,
-    name='SentinelRedLab',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    console=True,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-)
-coll_redlab = COLLECT(
-    exe_redlab,
-    b_redlab.binaries,
-    b_redlab.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='SentinelRedLab',
+    name='Sentinel',
 )

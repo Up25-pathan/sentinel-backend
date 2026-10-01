@@ -1,14 +1,17 @@
-"""SENTINEL REDLAB — offensive operations console.
+"""SENTINEL offensive tooling.
 
-A separate application from SENTINEL CIC. REDLAB owns the panels and
-utilities that act against infrastructure rather than reporting on it:
-reconnaissance, web inspection, privilege-escalation posture, wireless
-inventory, asset tracking, attack-path campaigns and network scanning.
+The panels and utilities that act against infrastructure rather than reporting
+on it: reconnaissance, web inspection, privilege-escalation posture, wireless
+inventory, asset tracking, attack-path campaigns, network scanning and
+exploitability assessment.
 
-Everything REDLAB reports is measured. Where a check cannot run, the tool
-says so rather than substituting a plausible value.
+These live in the ENGAGE and OPERATE sections of the single SENTINEL rail
+rather than in a second application. This module keeps the tool definitions the
+rail and the unified window both read, so there is one source of truth for each
+tool's name, script and expected flag.
 
-Run it with:  python -m redlab
+Everything reported here is measured. Where a check cannot run, the tool says
+so rather than substituting a plausible value.
 """
 
 __version__ = "1.0.0"

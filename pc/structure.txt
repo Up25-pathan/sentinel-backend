@@ -1,30 +1,49 @@
-redlab-console/
-│── redlab_ui.py             
-│── requirements.txt          # Dependencies list
+pc/
+│── sentinel_ui.py            # THE entrypoint — single window, one rail
+│── cic_ui.py                 # old launch command, forwards to sentinel_ui
+│── redlab_ui.py              # old launch command, forwards to sentinel_ui
+│── requirements.txt
+│── Sentinel.spec             # PyInstaller spec, one executable
 │
-├── bin/                      # Job runner scripts (safe wrappers)
-│   ├── recon_job.py
-│   ├── web_job.py
-│   ├── privesc_job.py
-│   ├── exploit_dev_job.py
-│   ├── wifi_job.py
-│   └── __init__.py
+├── ui/                       # intelligence panels
+│   ├── panels/
+│   │   ├── dashboard.py      # command deck
+│   │   ├── geopolitical_map.py
+│   │   ├── vuln_db.py
+│   │   ├── ai_chat.py
+│   │   └── ...
+│   ├── login_dialog.py
+│   └── style.qss
 │
-├── db/                       # SQLite audit DB + schema
-│   └── audit.db
+├── redlab/                   # offensive tooling (local job scripts)
+│   ├── __init__.py           # __tool_defs__ — one source of truth per tool
+│   ├── app.py                # old entrypoint, forwards to sentinel_ui
+│   ├── panels/
+│   │   ├── tools.py          # ToolPanel — RECON/WEB/PRIVESC/OSINT/WIFI/EXPLOIT
+│   │   ├── redops.py
+│   │   ├── network_scanner.py
+│   │   ├── campaigns.py
+│   │   └── assets.py
+│   ├── utils/
+│   │   ├── workers.py        # JobRunner — local QProcess
+│   │   ├── net_scanner.py
+│   │   ├── docker_tools.py
+│   │   └── vm_tools.py
+│   └── bin/                  # job scripts, run as subprocesses
+│       ├── recon_job.py
+│       ├── web_job.py
+│       ├── privesc_job.py
+│       ├── osint_job.py
+│       ├── wifi_job.py
+│       └── exploit_job.py
 │
-├── artifacts/                # All job results go here
-│   ├── web_lab/
-│   │   └── 2025-08-26_12-01-22/   # timestamped run dirs
-│   ├── linux_lab/
-│   └── ...
+├── shell/                    # shared chrome
+│   ├── shell.py              # ShellWindow, NavRail, shortcuts
+│   └── polish.py
 │
-├── labs/                     # (optional) docker-compose or lab configs
-│   ├── docker-compose.yml
-│   └── setup_scripts/
+├── utils/
+│   ├── api_client.py         # SERVER_URL, auth, SSE
+│   ├── audit.py              # action log
+│   └── system_monitor.py
 │
-└── utils/                    # Shared helpers
-    ├── audit.py              # log actions to db/audit.db
-    ├── docker_tools.py       # list containers, manage labs
-    ├── system_monitor.py     # cpu/mem/disk helpers
-    └── __init__.py
+└── db/                       # SQLite audit DB
