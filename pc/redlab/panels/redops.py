@@ -85,6 +85,7 @@ class RedOpsPanel(QWidget):
             ("PRIVESC", self.start_privesc_job, "#ef4444"),
             ("OSINT", self.start_osint_job, "#22d3ee"),
             ("WIFI", self.start_wifi_job, "#f59e0b"),
+            ("EXPLOIT", self.start_exploit_job, "#ef4444"),
         ]
         for label, cb, color in jobs_def:
             btn = QPushButton(label)
@@ -239,6 +240,22 @@ class RedOpsPanel(QWidget):
         interface, ok = QInputDialog.getText(self, 'Wi-Fi Interface', 'Enter interface name (e.g., wlan0):')
         if ok and interface:
             self.start_generic_job("WIFI", "wifi_job.py", ["--interface", interface])
+
+    def start_exploit_job(self):
+        target, ok = QInputDialog.getText(
+            self, 'Exploit Assessment Target',
+            'Target IP or hostname (authorised targets only):')
+        if not ok or not target:
+            return
+        ports, ok2 = QInputDialog.getText(
+            self, 'Port Range',
+            'Comma-separated ports (blank = default set):')
+        if not ok2:
+            return
+        args = ["--target", target.strip()]
+        if ports.strip():
+            args += ["--scan", ports.strip()]
+        self.start_generic_job("EXPLOIT", "exploit_job.py", args)
 
     def _update_history(self):
         self.history_table.setRowCount(0)
