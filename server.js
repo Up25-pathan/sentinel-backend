@@ -37,7 +37,11 @@ const PORT = process.env.PORT || 3001;
 // ─── Rate Limiting ─────────────────────────────────────────────
 const generalLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 120,
+    // 120/min was below what a single authenticated desktop client uses on a
+    // normal pass: dashboard 2/min + health 2/min + audit + several panels, all
+    // of which can land in the same window on a cold start. That produced 429s
+    // that the UI reported as a broken feed. This is still far below abuse.
+    max: 600,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests, please try again later.' }
@@ -46,6 +50,12 @@ const generalLimiter = rateLimit({
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    // A successful login must not consume the budget. Otherwise the desktop
+    // app — which authenticates once per launch — burns attempts and locks
+    // itself out of its own server after a handful of restarts.
+    skipSuccessfulRequests: true,
     message: { error: 'Too many login attempts. Try again in 15 minutes.' }
 });
 
