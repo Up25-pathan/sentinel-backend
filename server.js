@@ -153,33 +153,78 @@ app.get('/api/map/conflicts', authMiddleware, async (req, res) => {
     }
     try {
         const resp = await fetch(GDELT_GEO_URL, { signal: AbortSignal.timeout(8000) });
+        if (!resp.ok) throw new Error(`GDELT request failed (HTTP ${resp.status})`);
         const raw = await resp.json();
-        const features = (raw.features || []).filter(f => f.geometry && f.geometry.coordinates).map(f => ({
-            name: f.properties.Name || f.properties.Actor1Name || f.properties.Actor2Name || 'Unknown',
-            label: f.properties.EventCode || 'Conflict Event',
-            lat: f.geometry.coordinates[1],
-            lng: f.geometry.coordinates[0],
-            severity: f.properties.NumArticles ? (parseInt(f.properties.NumArticles) > 10 ? 'high' : parseInt(f.properties.NumArticles) > 3 ? 'medium' : 'low') : 'low',
-            source: 'GDELT',
-            url: f.properties.SOURCEURL || '',
-        }));
+        const features = (raw.features || []).filter(f => {
+            const coords = f.geometry && f.geometry.coordinates;
+            return f.geometry && f.geometry.type === 'Point' && Array.isArray(coords)
+                && Number.isFinite(coords[0]) && Number.isFinite(coords[1]);
+        }).map(f => {
+            const properties = f.properties || {};
+            const articles = Number(properties.NumArticles) || 0;
+            return {
+                name: properties.Name || properties.Actor1Name || properties.Actor2Name || 'Unknown',
+                label: properties.EventCode || 'Conflict Event',
+                lat: f.geometry.coordinates[1],
+                lng: f.geometry.coordinates[0],
+                article_count: articles,
+                source: 'GDELT',
+                url: properties.SOURCEURL || '',
+            };
+        });
         const result = { zones: [], events: features, count: features.length };
         conflictCache = { data: result, time: Date.now() };
         res.json(result);
     } catch (err) {
         if (conflictCache.data) {
-            res.json({ ...conflictCache.data, stale: true });
+            res.json({ ...conflictCache.data, stale: true, error: 'GDELT feed unavailable; showing cached data' });
         } else {
-            res.json({ zones: [], events: [], count: 0 });
+            res.json({ zones: [], events: [], count: 0, error: 'GDELT feed unavailable' });
         }
     }
 });
 
 // ─── Aviation Data (JWT required — proxies OpenSky) ─────────────
 let aviationCache = { data: null, time: 0 };
-const OPENSKY_USER = process.env.OPENSKY_USERNAME || '';
-const OPENSKY_PASS = process.env.OPENSKY_PASSWORD || '';
+const OPENSKY_CLIENT_ID = process.env.OPENSKY_CLIENT_ID || '';
+const OPENSKY_CLIENT_SECRET = process.env.OPENSKY_CLIENT_SECRET || '';
+const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
 const OPENSKY_URL = 'https://opensky-network.org/api/states/all';
+let openSkyToken = null;
+let openSkyTokenExpiresAt = 0;
+let openSkyTokenRequest = null;
+
+async function getOpenSkyAccessToken() {
+    if (!OPENSKY_CLIENT_ID || !OPENSKY_CLIENT_SECRET) return null;
+    if (openSkyToken && Date.now() < openSkyTokenExpiresAt) return openSkyToken;
+    if (!openSkyTokenRequest) {
+        openSkyTokenRequest = (async () => {
+            const response = await fetch(OPENSKY_TOKEN_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    grant_type: 'client_credentials',
+                    client_id: OPENSKY_CLIENT_ID,
+                    client_secret: OPENSKY_CLIENT_SECRET,
+                }),
+                signal: AbortSignal.timeout(10000),
+            });
+            if (!response.ok) {
+                const error = new Error(`OpenSky token request failed (HTTP ${response.status})`);
+                error.status = response.status;
+                throw error;
+            }
+            const data = await response.json();
+            if (!data.access_token) throw new Error('OpenSky token response had no access token');
+            openSkyToken = data.access_token;
+            openSkyTokenExpiresAt = Date.now() + Math.max(0, (Number(data.expires_in) || 1800) - 30) * 1000;
+            return openSkyToken;
+        })().finally(() => {
+            openSkyTokenRequest = null;
+        });
+    }
+    return openSkyTokenRequest;
+}
 
 app.get('/api/map/aviation', authMiddleware, async (req, res) => {
     const CACHE_TTL = 30000;
@@ -188,11 +233,14 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
     }
     try {
         const opts = { signal: AbortSignal.timeout(10000) };
-        if (OPENSKY_USER && OPENSKY_PASS) {
-            const b64 = Buffer.from(OPENSKY_USER + ':' + OPENSKY_PASS).toString('base64');
-            opts.headers = { 'Authorization': 'Basic ' + b64 };
-        }
+        const accessToken = await getOpenSkyAccessToken();
+        if (accessToken) opts.headers = { 'Authorization': `Bearer ${accessToken}` };
         const resp = await fetch(OPENSKY_URL, opts);
+        if (!resp.ok) {
+            const error = new Error(`OpenSky API request failed (HTTP ${resp.status})`);
+            error.status = resp.status;
+            throw error;
+        }
         const raw = await resp.json();
         const states = (raw.states || []).filter(s => s[5] && s[6]).map(s => ({
             icao24: s[0],
@@ -212,8 +260,12 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
         if (aviationCache.data) {
             res.json({ ...aviationCache.data, stale: true });
         } else {
-            // Do not echo upstream error text back to the caller.
-            res.json({ aircraft: [], count: 0, error: 'Aviation feed unavailable' });
+            const message = err.status === 401 || err.status === 403
+                ? 'OpenSky authentication failed; check client credentials'
+                : err.status === 429
+                    ? 'OpenSky rate limit reached'
+                    : 'Aviation feed unavailable';
+            res.json({ aircraft: [], count: 0, error: message });
         }
     }
 });

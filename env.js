@@ -171,7 +171,8 @@ function configStatus() {
         newsApi: isUnset(process.env.NEWS_API_KEY) ? 'unconfigured' : 'configured',
         groq: isUnset(process.env.GROQ_API_KEY) ? 'unconfigured' : `configured (${groqModel()})`,
         openai: isUnset(process.env.OPENAI_API_KEY) ? 'unconfigured' : 'configured',
-        openSky: isUnset(process.env.OPENSKY_USERNAME) ? 'anonymous' : 'configured',
+        openSky: isUnset(process.env.OPENSKY_CLIENT_ID) || isUnset(process.env.OPENSKY_CLIENT_SECRET)
+            ? 'anonymous (rate limited)' : 'configured',
         // NVD works key-free at 5 requests / 30 s. A key raises it to 50, which
         // only shortens the first sync; the feed is still free either way.
         nvd: isUnset(process.env.NVD_API_KEY) ? 'anonymous (rate limited)' : 'configured',
