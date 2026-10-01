@@ -33,6 +33,7 @@ const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+app.set('trust proxy', 1);
 
 // ─── Rate Limiting ─────────────────────────────────────────────
 const generalLimiter = rateLimit({
@@ -112,6 +113,10 @@ app.get('/api/health', (req, res) => {
     });
 });
 
+app.get('/', (req, res) => {
+    res.json({ service: 'SENTINEL API', health: '/api/health' });
+});
+
 // ─── SSE Stream (JWT required) ──────────────────────────────────
 app.get('/api/events/stream', authMiddleware, (req, res) => {
     res.writeHead(200, {
@@ -186,6 +191,8 @@ app.get('/api/map/conflicts', authMiddleware, async (req, res) => {
 
 // ─── Aviation Data (JWT required — proxies OpenSky) ─────────────
 let aviationCache = { data: null, time: 0 };
+let aviationFailureCache = { data: null, time: 0 };
+const AVIATION_FAILURE_CACHE_TTL = 120000;
 const OPENSKY_CLIENT_ID = process.env.OPENSKY_CLIENT_ID || '';
 const OPENSKY_CLIENT_SECRET = process.env.OPENSKY_CLIENT_SECRET || '';
 const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
@@ -231,6 +238,9 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
     if (Date.now() - aviationCache.time < CACHE_TTL && aviationCache.data) {
         return res.json(aviationCache.data);
     }
+    if (Date.now() - aviationFailureCache.time < AVIATION_FAILURE_CACHE_TTL && aviationFailureCache.data) {
+        return res.json(aviationFailureCache.data);
+    }
     try {
         const opts = { signal: AbortSignal.timeout(10000) };
         const accessToken = await getOpenSkyAccessToken();
@@ -254,19 +264,22 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
         }));
         const result = { aircraft: states, count: states.length, timestamp: new Date().toISOString() };
         aviationCache = { data: result, time: Date.now() };
+        aviationFailureCache = { data: null, time: 0 };
         res.json(result);
     } catch (err) {
-        console.error('OpenSky proxy error:', err.message);
-        if (aviationCache.data) {
-            res.json({ ...aviationCache.data, stale: true });
-        } else {
-            const message = err.status === 401 || err.status === 403
-                ? 'OpenSky authentication failed; check client credentials'
-                : err.status === 429
-                    ? 'OpenSky rate limit reached'
+        const message = err.status === 401 || err.status === 403
+            ? 'OpenSky authentication failed; check client credentials'
+            : err.status === 429
+                ? 'OpenSky rate limit reached'
+                : err.name === 'TimeoutError' || err.name === 'AbortError'
+                    ? 'OpenSky request timed out; retrying shortly'
                     : 'Aviation feed unavailable';
-            res.json({ aircraft: [], count: 0, error: message });
-        }
+        console.warn('OpenSky proxy:', message);
+        const result = aviationCache.data
+            ? { ...aviationCache.data, stale: true, error: message }
+            : { aircraft: [], count: 0, error: message };
+        aviationFailureCache = { data: result, time: Date.now() };
+        res.json(result);
     }
 });
 

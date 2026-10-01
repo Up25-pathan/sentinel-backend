@@ -27,7 +27,7 @@ function safeEqual(a, b) {
  */
 function apiKeyMiddleware(req, res, next) {
     // Skip for health check
-    if (req.path === '/api/health') return next();
+    if (req.path === '/' || req.path === '/api/health') return next();
 
     const apiKey = req.headers['x-api-key'];
     const validKey = process.env.API_SECRET_KEY;

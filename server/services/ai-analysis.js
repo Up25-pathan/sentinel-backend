@@ -13,6 +13,7 @@ const { groqModel } = require('../env');
 require('dotenv').config();
 
 let groq = null;
+let aiRateLimitedUntil = 0;
 
 // ─── AI Budget Limiter ──────────────────────────────────────────
 // Only allow max AI_DAILY_BUDGET calls per day to prevent quota exhaustion
@@ -46,10 +47,19 @@ function getGroq() {
     return groq;
 }
 
+function groqRetryDelayMs(err) {
+    const retry = String(err.message || '').match(/try again in\s+(?:(\d+)m)?([\d.]+)s/i);
+    if (!retry) return 15 * 60 * 1000;
+    const minutes = Number(retry[1]) || 0;
+    const seconds = Number(retry[2]) || 0;
+    return Math.min(24 * 60 * 60 * 1000, Math.max(60_000, (minutes * 60 + seconds + 10) * 1000));
+}
+
 /**
  * Enhance with AI only for high-value events (budget-limited)
  */
 async function enhanceWithAI(article, localAnalysis) {
+    if (Date.now() < aiRateLimitedUntil) return localAnalysis;
     const ai = getGroq();
     if (!ai || !canUseAI()) return localAnalysis;
 
@@ -107,7 +117,13 @@ const response = await ai.chat.completions.create({
             location_name: localAnalysis.location_name || aiResult.location_name,
         };
     } catch (err) {
-        console.warn('  ⚠️ AI enhancement failed, using local analysis:', err.message);
+        if (err.status === 429 || err.statusCode === 429) {
+            const delay = groqRetryDelayMs(err);
+            aiRateLimitedUntil = Date.now() + delay;
+            console.warn(`  ⚠️ Groq rate limited; using local analysis for ${Math.ceil(delay / 60000)} minute(s).`);
+        } else {
+            console.warn('  ⚠️ AI enhancement failed, using local analysis:', err.message);
+        }
         return localAnalysis;
     }
 }
