@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 const { fetchEventImages } = require('./image-scraper');
 const { analyzeLocal, extractNexusEntities } = require('./local-nlp');
 const { processEventNexusLocal } = require('./nexus');
+const { groqModel } = require('../env');
 require('dotenv').config();
 
 let groq = null;
@@ -80,8 +81,8 @@ Respond strictly matching this JSON schema:
     "lng": longitude_or_null
 }`;
 
-        const response = await ai.chat.completions.create({
-            model: 'llama-3.1-8b-instant',
+const response = await ai.chat.completions.create({
+    model: groqModel(),
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.3,
             max_tokens: 600,

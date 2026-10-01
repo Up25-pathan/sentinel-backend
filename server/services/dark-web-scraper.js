@@ -6,6 +6,7 @@
 const axios = require('axios');
 const { getDb } = require('../db');
 const Groq = require('groq-sdk');
+const { groqModel } = require('../env');
 require('dotenv').config();
 
 let groq = null;
@@ -298,7 +299,7 @@ ${dataContext}`;
 
         const completion = await client.chat.completions.create({
             messages: [{ role: "user", content: prompt }],
-            model: "llama-3.1-8b-instant",
+            model: groqModel(),
             temperature: 0.3,
             max_tokens: 150,
         });

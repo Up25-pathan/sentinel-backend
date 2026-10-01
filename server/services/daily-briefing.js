@@ -5,6 +5,7 @@
  */
 const Groq = require('groq-sdk');
 const { getDb } = require('../db');
+const { groqModel } = require('../env');
 require('dotenv').config();
 
 let groq = null;
@@ -78,7 +79,7 @@ async function generateDailyBriefing() {
 
     try {
         const completion = await client.chat.completions.create({
-            model: 'llama-3.1-8b-instant',
+            model: groqModel(),
             messages: [
                 {
                     role: 'system',
@@ -114,7 +115,7 @@ Be concise and analytical. Use intelligence-style language.`
             eventCount: recentEvents.length,
             categories: categoryBreakdown,
             generatedAt: new Date().toISOString(),
-            model: 'llama-3.1-8b'
+            model: groqModel()
         };
 
         // Save to database (reuse global_briefings table)

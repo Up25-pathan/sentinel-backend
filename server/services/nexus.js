@@ -6,6 +6,7 @@
 const { v4: uuidv4 } = require('uuid');
 const Groq = require('groq-sdk');
 const { getDb } = require('../db');
+const { groqModel } = require('../env');
 const { extractNexusEntities } = require('./local-nlp');
 require('dotenv').config();
 
@@ -98,7 +99,7 @@ async function processEventNexusAI(event) {
         `;
 
         const completion = await client.chat.completions.create({
-            model: 'llama-3.1-8b-instant',
+            model: groqModel(),
             messages: [{ role: 'user', content: prompt }],
             response_format: { type: 'json_object' },
             temperature: 0.1

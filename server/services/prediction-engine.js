@@ -5,7 +5,7 @@
 const Groq = require('groq-sdk');
 const { getDb } = require('../db');
 const { v4: uuidv4 } = require('uuid');
-const { isUnset } = require('../env');
+const { isUnset, groqModel } = require('../env');
 
 let groq = null;
 let warnedUnavailable = false;
@@ -80,7 +80,7 @@ async function generateClusterPredictions(clusterId) {
         `;
 
         const completion = await client.chat.completions.create({
-            model: 'llama-3.1-70b-versatile',
+            model: groqModel(),
             messages: [{ role: 'user', content: prompt }],
             response_format: { type: 'json_object' },
             temperature: 0.2
