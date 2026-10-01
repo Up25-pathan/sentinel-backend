@@ -1,11 +1,11 @@
 /**
  * AI Chat Service
  * Natural language Q&A over the intelligence database.
- * Uses Groq (Llama 3.1) with event context for grounded answers.
+ * Uses Groq with event context for grounded answers.
  */
 const Groq = require('groq-sdk');
 const { getDb } = require('../db');
-const { isUnset } = require('../env');
+const { isUnset, groqModel } = require('../env');
 
 let groq = null;
 
@@ -100,7 +100,7 @@ Instructions:
 
     try {
         const completion = await client.chat.completions.create({
-            model: 'llama-3.1-8b-instant',
+            model: groqModel(),
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: question }
@@ -114,7 +114,7 @@ Instructions:
         return {
             answer,
             eventsReferenced: events.length,
-            model: 'llama-3.1-8b',
+            model: groqModel(),
             timestamp: new Date().toISOString()
         };
     } catch (err) {

@@ -15,6 +15,9 @@ const dotenv = require('dotenv');
 
 const SERVER_DIR = path.join(__dirname);
 
+// Verified live against Groq's /openai/v1/models for the configured key.
+const DEFAULT_GROQ_MODEL = 'openai/gpt-oss-120b';
+
 // Always resolve .env against the server directory. Several services previously
 // called dotenv.config() with no path, which silently dropped every variable
 // whenever the process was started from outside server/.
@@ -142,6 +145,23 @@ function resolveJwtSecret() {
 }
 
 /**
+ * The Groq model to use.
+ *
+ * Groq retires models on its own schedule, and a retired model makes every AI
+ * call fail with a 404 that surfaces as a generic fallback. The name was
+ * hardcoded in two places and both had to change when llama-3.1-8b was
+ * retired. It now resolves from the environment with a default, so a model
+ * change is a one-line env edit instead of a code change.
+ */
+function groqModel() {
+    const configured = process.env.GROQ_MODEL;
+    if (typeof configured === 'string' && configured.trim()) {
+        return configured.trim();
+    }
+    return DEFAULT_GROQ_MODEL;
+}
+
+/**
  * Summary of every integration, for boot logging and /api/health.
  */
 function configStatus() {
@@ -149,7 +169,7 @@ function configStatus() {
         port: process.env.PORT || '3001',
         db: process.env.DB_PATH || './db/geoint.db',
         newsApi: isUnset(process.env.NEWS_API_KEY) ? 'unconfigured' : 'configured',
-        groq: isUnset(process.env.GROQ_API_KEY) ? 'unconfigured' : 'configured',
+        groq: isUnset(process.env.GROQ_API_KEY) ? 'unconfigured' : `configured (${groqModel()})`,
         openai: isUnset(process.env.OPENAI_API_KEY) ? 'unconfigured' : 'configured',
         openSky: isUnset(process.env.OPENSKY_USERNAME) ? 'anonymous' : 'configured',
         // NVD works key-free at 5 requests / 30 s. A key raises it to 50, which
@@ -214,7 +234,8 @@ module.exports = {
     isUnset,
     isUsableSecret,
     resolveJwtSecret,
-    generateSecret,
-    configStatus,
+generateSecret,
+  groqModel,
+  configStatus,
     validateEnv,
 };
