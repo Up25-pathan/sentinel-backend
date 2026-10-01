@@ -47,6 +47,17 @@ const generalLimiter = rateLimit({
     message: { error: 'Too many requests, please try again later.' }
 });
 
+// Map and intelligence routes get their own allowance. Every route shares the
+// general limiter, so one panel's polling previously starved the rest — the map
+// returned 429 for all three of its layers while the dashboard looked healthy.
+const dataLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 90,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Data feed rate limit reached, please retry shortly.' }
+});
+
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 20,
@@ -213,7 +224,7 @@ app.use('/api/auth', authLimiter, authRoutes);
 // ─── Protected Routes ──────────────────────────────────────────
 app.use('/api/events', authMiddleware, eventRoutes);
 app.use('/api/alerts', authMiddleware, alertRoutes);
-app.use('/api/map', authMiddleware, mapRoutes);
+app.use('/api/map', dataLimiter, authMiddleware, mapRoutes);
 app.use('/api/watchlists', authMiddleware, watchlistsRoutes);
 app.use('/api/intelligence', authMiddleware, intelligenceRoutes);
 app.use('/api/osint', authMiddleware, osintRoutes);
