@@ -9,6 +9,23 @@ const { logAction } = require('../services/audit-log');
 const { requireAdminRole } = require('../middleware/auth');
 const router = express.Router();
 
+// GET /api/intelligence/feeds — Latest collected source articles for the desktop feed panel.
+router.get('/feeds', (req, res) => {
+    try {
+        const limit = clampInt(req.query.limit, { min: 1, max: 100, fallback: 50 });
+        const feeds = getDb().prepare(`
+            SELECT id, title, description AS summary, source_name, url, published_at, image_url
+            FROM raw_articles
+            ORDER BY COALESCE(published_at, ingested_at) DESC
+            LIMIT ?
+        `).all(limit);
+        res.json({ feeds, count: feeds.length });
+    } catch (err) {
+        console.error('Threat feeds error:', err);
+        res.status(500).json({ error: 'Failed to load threat feeds' });
+    }
+});
+
 // GET /api/intelligence/vulns
 //   ?severity=CRITICAL|HIGH|MEDIUM|LOW   ?kev=1
 //   ?days=N   ?q=<text>   ?sort=cvss|published   ?page=&limit=

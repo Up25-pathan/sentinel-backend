@@ -26,7 +26,7 @@ const { isUnset } = require('../env');
 const { recordSuccess, recordFailure } = require('./source-health');
 
 const NVD_BASE = 'https://services.nvd.nist.gov/rest/json/cves/2.0';
-const KEV_URL = 'https://www.cisa.gov/sites/default/files/known_exploited_vulnerabilities.json';
+const KEV_URL = 'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json';
 
 // NVD: 5 requests / 30 s unauthenticated, 50 authenticated. Stay under the
 // unauthenticated ceiling so a keyless deployment never gets 403-throttled.
