@@ -197,6 +197,15 @@ const OPENSKY_CLIENT_ID = process.env.OPENSKY_CLIENT_ID || '';
 const OPENSKY_CLIENT_SECRET = process.env.OPENSKY_CLIENT_SECRET || '';
 const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
 const OPENSKY_URL = 'https://opensky-network.org/api/states/all';
+const ADSB_LOL_ENDPOINTS = [
+    { url: 'https://api.adsb.lol/v2/lat/0/0/dist/250', label: 'adsb.lol/global' },
+    { url: 'https://api.adsb.lol/v2/mil', label: 'adsb.lol/mil' },
+];
+// adsb.lol answers 403 to Node's default undici User-Agent, so every upstream
+// call identifies itself explicitly.
+const UPSTREAM_HEADERS = { 'User-Agent': 'SENTINEL/1.0 (geopolitical-intelligence)' };
+const OPENSKY_RETRY_MS = 10 * 60 * 1000;
+let openSkyBlockedUntil = 0;
 let openSkyToken = null;
 let openSkyTokenExpiresAt = 0;
 let openSkyTokenRequest = null;
@@ -233,6 +242,54 @@ async function getOpenSkyAccessToken() {
     return openSkyTokenRequest;
 }
 
+function normaliseAdsbLol(raw) {
+    return (raw.ac || []).filter(a => a.lat != null && a.lon != null).map(a => ({
+        icao24: a.icao24 || a.hex || '',
+        callsign: (a.flight || '').trim(),
+        origin_country: a.country_iso_name || '',
+        lat: a.lat,
+        lng: a.lon,
+        // adsb.lol reports feet and knots. OpenSky reports metres and m/s, and
+        // the map converts using those units, so convert here to keep one
+        // contract and avoid altitudes that are 3x too high and speeds 2x off.
+        // alt_baro is the string "ground" for aircraft on the ground, which
+        // must not be coerced into NaN.
+        altitude: Number.isFinite(a.alt_baro) ? a.alt_baro / 3.28084 : null,
+        velocity: Number.isFinite(a.gs) ? a.gs / 1.94384 : null,
+        heading: a.true_heading != null ? a.true_heading : (a.track != null ? a.track : null),
+    }));
+}
+
+async function fetchAircraftFromAdsbLol() {
+    const failures = [];
+    for (const endpoint of ADSB_LOL_ENDPOINTS) {
+        try {
+            const resp = await fetch(endpoint.url, {
+                signal: AbortSignal.timeout(15000),
+                headers: { ...UPSTREAM_HEADERS },
+            });
+            if (!resp.ok) {
+                failures.push(`${endpoint.label}[upstream HTTP ${resp.status}]`);
+                continue;
+            }
+            const states = normaliseAdsbLol(await resp.json());
+            if (!states.length) {
+                failures.push(`${endpoint.label}[0 aircraft with position]`);
+                continue;
+            }
+            return {
+                aircraft: states,
+                count: states.length,
+                source: endpoint.label,
+                timestamp: new Date().toISOString(),
+            };
+        } catch (err) {
+            failures.push(`${endpoint.label}[${aviationDiagnostic(err)}]`);
+        }
+    }
+    throw new Error(failures.join(' '));
+}
+
 function aviationDiagnostic(err) {
     const parts = [];
     if (err.status) parts.push('upstream HTTP ' + err.status);
@@ -256,10 +313,16 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
     if (Date.now() - aviationFailureCache.time < AVIATION_FAILURE_CACHE_TTL && aviationFailureCache.data) {
         return res.json(aviationFailureCache.data);
     }
+    const primaryFailures = [];
+    // When OpenSky is unreachable it costs ~11s of connect timeout per call, so
+    // it is skipped for a cooldown rather than retried on every poll.
+    if (Date.now() < openSkyBlockedUntil) {
+        primaryFailures.push(`opensky[skipped, backoff for ${Math.ceil((openSkyBlockedUntil - Date.now()) / 60000)}m]`);
+    } else {
     try {
-        const opts = { signal: AbortSignal.timeout(30000) };
+        const opts = { signal: AbortSignal.timeout(30000), headers: { ...UPSTREAM_HEADERS } };
         const accessToken = await getOpenSkyAccessToken();
-        if (accessToken) opts.headers = { 'Authorization': `Bearer ${accessToken}` };
+        if (accessToken) opts.headers = { ...UPSTREAM_HEADERS, 'Authorization': `Bearer ${accessToken}` };
         const resp = await fetch(OPENSKY_URL, opts);
         if (!resp.ok) {
             const error = new Error(`OpenSky API request failed (HTTP ${resp.status})`);
@@ -277,24 +340,33 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
             velocity: s[9],
             heading: s[10],
         }));
-        const result = { aircraft: states, count: states.length, timestamp: new Date().toISOString() };
+        const result = { aircraft: states, count: states.length, source: 'opensky', timestamp: new Date().toISOString() };
+        aviationCache = { data: result, time: Date.now() };
+        aviationFailureCache = { data: null, time: 0 };
+        openSkyBlockedUntil = 0;
+        return res.json(result);
+    } catch (err) {
+        openSkyBlockedUntil = Date.now() + OPENSKY_RETRY_MS;
+        primaryFailures.push(`opensky[${aviationDiagnostic(err)}]`);
+        console.warn('OpenSky proxy failed, falling back:', aviationDiagnostic(err));
+    }
+    }
+
+    // OpenSky blocks cloud/datacenter egress ranges, so a Render deploy cannot
+    // reach it even though the same call works from a home connection. Fall
+    // back to a second ADS-B aggregator rather than showing an empty layer.
+    try {
+        const result = await fetchAircraftFromAdsbLol();
         aviationCache = { data: result, time: Date.now() };
         aviationFailureCache = { data: null, time: 0 };
         res.json(result);
     } catch (err) {
-        const message = err.status === 401 || err.status === 403
-            ? 'OpenSky authentication failed; check client credentials'
-            : err.status === 429
-                ? 'OpenSky rate limit reached'
-                : err.name === 'TimeoutError' || err.name === 'AbortError'
-                    ? 'OpenSky request timed out; retrying shortly'
-                    : 'Aviation feed unavailable';
-        const detail = aviationDiagnostic(err);
-        console.warn('OpenSky proxy:', message, '|', detail);
+        const detail = primaryFailures.join(' ') + ' adsb.lol[' + (err.message || aviationDiagnostic(err)) + ']';
+        const message = 'Aviation feed unavailable';
+        console.warn('All aviation providers failed:', detail);
         const result = aviationCache.data
-            ? { ...aviationCache.data, stale: true, error: message }
-            : { aircraft: [], count: 0, error: message };
-        result.detail = detail;
+            ? { ...aviationCache.data, stale: true, error: message, detail }
+            : { aircraft: [], count: 0, error: message, detail };
         aviationFailureCache = { data: result, time: Date.now() };
         res.json(result);
     }
