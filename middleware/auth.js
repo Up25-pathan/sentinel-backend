@@ -86,6 +86,13 @@ function authMiddleware(req, res, next) {
     }
 }
 
+function requireAdminRole(req, res, next) {
+    if (req.user?.role !== 'admin') {
+        return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+}
+
 /**
  * Security Headers Middleware — add defense headers to all responses
  */
@@ -101,4 +108,4 @@ function securityHeaders(req, res, next) {
     next();
 }
 
-module.exports = { authMiddleware, apiKeyMiddleware, securityHeaders };
+module.exports = { authMiddleware, apiKeyMiddleware, requireAdminRole, securityHeaders };

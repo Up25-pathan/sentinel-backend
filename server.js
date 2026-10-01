@@ -10,7 +10,7 @@ const { validateEnv, resolveJwtSecret, configStatus } = require('./env');
 validateEnv();
 
 const { getDb, closeDb } = require('./db');
-const { authMiddleware, apiKeyMiddleware, securityHeaders } = require('./middleware/auth');
+const { authMiddleware, apiKeyMiddleware, requireAdminRole, securityHeaders } = require('./middleware/auth');
 const { startScheduler } = require('./scheduler');
 const { startBroadcaster, stopBroadcaster, broadcasterStatus } = require('./broadcaster');
 const { sourceHealth } = require('./services/source-health');
@@ -277,12 +277,12 @@ app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/events', authMiddleware, eventRoutes);
 app.use('/api/alerts', authMiddleware, alertRoutes);
 app.use('/api/map', dataLimiter, authMiddleware, mapRoutes);
-app.use('/api/watchlists', authMiddleware, watchlistsRoutes);
+app.use('/api/watchlists', authMiddleware, requireAdminRole, watchlistsRoutes);
 app.use('/api/intelligence', authMiddleware, intelligenceRoutes);
 app.use('/api/osint', authMiddleware, osintRoutes);
 app.use('/api/darkweb', authMiddleware, darkwebRoutes);
-app.use('/api/audit', authMiddleware, auditRoutes);
-app.use('/api/assets', authMiddleware, assetRoutes);
+app.use('/api/audit', authMiddleware, requireAdminRole, auditRoutes);
+app.use('/api/assets', authMiddleware, requireAdminRole, assetRoutes);
 
 // ─── Seed Endpoint (protected, dev-only) ────────────────────────
 // db/seed.js inserts INVENTED geopolitical events, alerts and dark-web
@@ -291,7 +291,7 @@ app.use('/api/assets', authMiddleware, assetRoutes);
 // deployed instance: a live dashboard must only ever show collected data.
 const SEED_BLOCKED = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
 
-app.post('/api/seed', authMiddleware, (req, res) => {
+app.post('/api/seed', authMiddleware, requireAdminRole, (req, res) => {
     if (SEED_BLOCKED) {
         return res.status(403).json({
             error: 'Seeding is disabled on a deployed instance',

@@ -6,6 +6,7 @@ const { getLatestDailyBriefing } = require('../services/daily-briefing');
 const { getRiskTrends, getCategoryTrends, getRegionalTrends, getSourceCredibility, getIntelSummary } = require('../services/trend-analysis');
 const { vulnStats, syncVulnerabilities } = require('../services/vulnerabilities');
 const { logAction } = require('../services/audit-log');
+const { requireAdminRole } = require('../middleware/auth');
 const router = express.Router();
 
 // GET /api/intelligence/vulns
@@ -94,7 +95,7 @@ router.get('/vulns', (req, res) => {
 });
 
 // POST /api/intelligence/vulns/sync — force an immediate upstream refresh
-router.post('/vulns/sync', async (req, res) => {
+router.post('/vulns/sync', requireAdminRole, async (req, res) => {
     try {
         const result = await syncVulnerabilities();
         logAction('VULN_SYNC', `NVD ${result.nvd} CVEs, KEV ${result.kev} entries`);

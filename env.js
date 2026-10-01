@@ -179,6 +179,9 @@ function configStatus() {
         apiSecretKey: isUnset(process.env.API_SECRET_KEY) ? 'disabled' : 'configured',
         jwtSecret: isUnset(process.env.JWT_SECRET) ? 'generated (set JWT_SECRET to persist)' : 'configured',
         authUsername: isUnset(process.env.AUTH_USERNAME) ? 'admin (default)' : 'configured',
+        analystAccount: !isUnset(process.env.AUTH_ANALYST_USERNAME)
+            && (!isUnset(process.env.AUTH_ANALYST_PASSWORD) || !isUnset(process.env.AUTH_ANALYST_PASSWORD_HASH))
+            ? 'configured' : 'disabled',
     };
 }
 
@@ -212,6 +215,12 @@ function validateEnv() {
             'Neither AUTH_PASSWORD nor AUTH_PASSWORD_HASH is set — falling back to the ' +
             'built-in default password. Set AUTH_PASSWORD_HASH for production.'
         );
+    }
+    const hasAnalystUsername = !isUnset(process.env.AUTH_ANALYST_USERNAME);
+    const hasAnalystPassword = !isUnset(process.env.AUTH_ANALYST_PASSWORD)
+        || !isUnset(process.env.AUTH_ANALYST_PASSWORD_HASH);
+    if (hasAnalystUsername !== hasAnalystPassword) {
+        warnings.push('Analyst login is incomplete — set both AUTH_ANALYST_USERNAME and an analyst password or hash.');
     }
     if (isUnset(process.env.NEWS_API_KEY)) {
         warnings.push('NEWS_API_KEY not configured — NewsAPI ingestion disabled.');
