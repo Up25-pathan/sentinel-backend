@@ -521,9 +521,17 @@ QFrame#HUDFrame QLabel#FrameTitle {
 }
 
 /* ─── MAP TOOLBAR ─────────────────────────────────────────────── */
+#MapUnavailable {
+    background-color: #0a0c12;
+    color: #64748b;
+    border: 1px dashed #1a1e2e;
+    font-size: 9pt;
+    letter-spacing: 1px;
+}
+
 #MapToolbar {
     background-color: #0c0e14;
-    border-bottom: 1px solid #1a1e2e;
+    border-bottom: 1px solid #1a1e14;
     min-height: 30px;
     max-height: 30px;
 }

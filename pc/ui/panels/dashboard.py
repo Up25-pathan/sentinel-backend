@@ -656,7 +656,7 @@ def _shorten(text, limit=96):
 # ═══════════════════════════════════════════════════════════════════════
 class DashboardPanel(QWidget):
     """SENTINEL Command Deck. Constructor keeps the (api_client) signature so
-    redlab_ui.py needs no change; every figure comes from the server."""
+    cic_ui.py needs no change; every figure comes from the server."""
 
     # (key, title, colour, sub) — `delta_key` is the risk_trend field used for
     # the 24h delta, and is None where the server exposes no per-day series.
@@ -920,6 +920,13 @@ class DashboardPanel(QWidget):
         if not self.api_client:
             self._set_error("no API client")
             return
+        # Polling while unauthenticated produced a 401 every cycle, which the
+        # server counts against its limiter and answered with 429. Wait for a
+        # token instead, then load once per login.
+        if not (getattr(self.api_client, "token", None) or ""):
+            self._status_label.setText("AUTH REQUIRED")
+            return
+        self._status_label.setText("LIVE")
         self._request(f"{SERVER_URL}/api/intelligence/dashboard", self._on_dashboard)
         self._request(f"{SERVER_URL}/api/health", self._on_health)
 
@@ -931,6 +938,7 @@ class DashboardPanel(QWidget):
             req.setRawHeader(b"Authorization", f"Bearer {token}".encode())
         reply = self._nam.get(req)
         reply._sentinel_handler = handler
+        reply._sentinel_url = url
 
     def _on_reply(self, reply):
         handler = getattr(reply, "_sentinel_handler", None)
@@ -1088,6 +1096,6 @@ class DashboardPanel(QWidget):
             "color:#22d3ee; font-size:9pt; font-weight:700; letter-spacing:2px;")
 
     def refresh(self):
-        """Called by redlab_ui.py navigation."""
+        """Called by cic_ui.py navigation and after a successful login."""
         if self.isVisible():
             self._load()

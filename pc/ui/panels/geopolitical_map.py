@@ -2,9 +2,16 @@ import json
 import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox
 from PyQt6.QtCore import QUrl, QTimer, Qt
-from PyQt6.QtWebEngineWidgets import QWebEngineView
 
 from utils.api_client import SERVER_URL
+
+# QtWebEngine aborts the process natively when it cannot initialise, which no
+# amount of try/except can catch. It needs a working GPU/display stack, so on a
+# headless host the map cannot be shown at all. Set SENTINEL_DISABLE_WEBENGINE=1
+# to substitute a labelled placeholder and let the rest of the app run.
+WEBENGINE_DISABLED = os.environ.get("SENTINEL_DISABLE_WEBENGINE", "").strip().lower() in (
+    "1", "true", "yes", "on",
+)
 
 MAP_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html>
@@ -112,8 +119,39 @@ function getIcon(risk) {
   return ICONS[risk] || ICONS.LOW;
 }
 
+// A 429 means the server's limiter is counting us. Retrying on the normal
+// interval just keeps the limiter engaged, so back off for the window the
+// server advertises instead of hammering it.
+var backoffUntil = 0;
+
+function rateLimitedUntil(retryAfter) {
+  var seconds = parseInt(retryAfter, 10);
+  if (isNaN(seconds) || seconds < 1) seconds = 30;
+  if (seconds > 120) seconds = 120;
+  backoffUntil = Date.now() + seconds * 1000;
+  return seconds;
+}
+
+function inBackoff() {
+  return Date.now() < backoffUntil;
+}
+
+function backoffLeft() {
+  return Math.ceil((backoffUntil - Date.now()) / 1000);
+}
+
 function fetchJSON(url, headers) {
+  if (inBackoff()) {
+    return Promise.reject(new Error('BACKOFF ' + backoffLeft() + 's'));
+  }
   return fetch(url, headers).then(function(r) {
+    if (r.status === 429) {
+      rateLimitedUntil(r.headers.get('Retry-After'));
+      throw new Error('429 RATE LIMITED — RETRY IN ' + backoffLeft() + 'S');
+    }
+    if (r.status === 401) {
+      throw new Error('401 SESSION EXPIRED — RE-LOGIN');
+    }
     if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
     return r.json();
   });
@@ -204,7 +242,13 @@ function loadAircraft() {
         }
       });
     })
-    .catch(function(err) { console.error('Aircraft load error:', err); });
+    .catch(function(err) {
+      // Silence expected rate-limit waits; they are shown in the status bar
+      // and were the bulk of the console noise in the log.
+      if (String(err.message).indexOf('BACKOFF') !== 0) {
+        console.error('Aircraft load error:', err);
+      }
+    });
 }
 
 function startAircraftUpdates() {
@@ -317,7 +361,13 @@ class GeopoliticalMapPanel(QWidget):
 
         layout.addWidget(toolbar)
 
-        self.web_view = QWebEngineView()
+        self.web_view = None
+        if WEBENGINE_DISABLED:
+            self.web_view = self._build_placeholder()
+        else:
+            # Imported lazily so a disabled host never loads the module at all.
+            from PyQt6.QtWebEngineWidgets import QWebEngineView
+            self.web_view = QWebEngineView()
         layout.addWidget(self.web_view, 1)
 
         # The map HTML embeds the bearer token, and this panel is built before
@@ -327,11 +377,27 @@ class GeopoliticalMapPanel(QWidget):
         if login_result is not None:
             login_result.connect(self._on_login)
 
+    def _build_placeholder(self):
+        """Stand-in for the map when QtWebEngine cannot run on this host."""
+        placeholder = QLabel(
+            "MAP UNAVAILABLE\n\n"
+            "QtWebEngine is disabled for this process.\n"
+            "Set SENTINEL_DISABLE_WEBENGINE=0 and run on a host with a\n"
+            "display or GPU stack to show the live map."
+        )
+        placeholder.setObjectName("MapUnavailable")
+        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder.setWordWrap(True)
+        return placeholder
+
     def _on_login(self, ok, _message):
-        if ok:
+        if ok and not WEBENGINE_DISABLED:
             self._load_map()
 
     def _load_map(self):
+        if WEBENGINE_DISABLED:
+            self.status_label.setText("MAP DISABLED — WEBENGINE OFF")
+            return
         try:
             token = self.api_client.token or ""
             html = MAP_HTML_TEMPLATE.replace("%API_URL%", json.dumps(SERVER_URL))

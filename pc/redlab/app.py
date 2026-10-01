@@ -14,6 +14,7 @@ from redlab.panels.assets import AssetsPanel
 from redlab.panels.campaigns import CampaignsPanel
 from redlab.panels.network_scanner import NetworkScannerPanel
 from redlab.panels.redops import RedOpsPanel
+from redlab.panels.tools import ToolPanel
 from shell import ShellWindow, excepthook
 from utils import audit
 from utils.api_client import ApiClient, SERVER_URL
@@ -36,12 +37,41 @@ class RedLabWindow(ShellWindow):
         self.on_startup()
 
     def build_panels(self):
-        self.panels = {
+        # Each tool gets a rail entry, so the sidebar names the actual tooling
+        # instead of hiding all six behind a single OPS tab.
+        tool_blurbs = {
+            "recon": "Discovers live hosts, resolves DNS and probes open ports on a "
+                     "target you are authorised to assess.",
+            "web": "Fetches a target over HTTP and reports the response, headers, "
+                   "TLS certificate and anything the page exposes.",
+            "privesc": "Audits the local host for misconfiguration that would allow "
+                       "privilege escalation. Read-only: nothing is modified.",
+            "osint": "Looks up WHOIS registration, DNS records and discoverable "
+                     "subdomains for a domain using public sources.",
+            "wifi": "Inventories local wireless interfaces and the networks in "
+                    "range, as reported by the OS.",
+            "exploit": "Identifies service banners and matches them against a CVE "
+                       "corpus to report exploitability. Authorised targets only. "
+                       "Assessment only — no payload is delivered or executed.",
+        }
+        tool_colors = {
+            "recon": "#22d3ee", "web": "#f59e0b", "privesc": "#ef4444",
+            "osint": "#22d3ee", "wifi": "#f59e0b", "exploit": "#ef4444",
+        }
+        panels = {}
+        for key, (name, title, prompt, script, flag) in redlab.__tool_defs__.items():
+            panels[key] = ToolPanel(
+                key=key, name=name, title=title, prompt_label=prompt,
+                script_name=script, accent=tool_colors[key],
+                blurb=tool_blurbs[key], value_flag=flag,
+            )
+        panels.update({
             "redops": RedOpsPanel(),
             "scanner": NetworkScannerPanel(),
             "campaign": CampaignsPanel(),
             "assets": AssetsPanel(),
-        }
+        })
+        self.panels = panels
         self.panel_keys = list(redlab.__panel_keys__)
         for key in self.panel_keys:
             self.content.addWidget(self.panels[key])

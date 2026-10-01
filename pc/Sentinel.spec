@@ -20,7 +20,10 @@ COMMON_HIDDEN = [
 ]
 
 a_cic = Analysis(
-    [os.path.join(PC_ROOT, 'redlab_ui.py')],
+    # cic_ui.py, not redlab_ui.py. redlab_ui.py now launches REDLAB, so
+    # building CIC from it would ship the reporting app wearing the offensive
+    # app's filename.
+    [os.path.join(PC_ROOT, 'cic_ui.py')],
     pathex=[PC_ROOT],
     binaries=[],
     datas=[
@@ -60,11 +63,13 @@ coll_cic = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='Sentinel',
+    name='SentinelCIC',
 )
 
 b_redlab = Analysis(
-    [os.path.join(PC_ROOT, 'redlab', '__main__.py')],
+    # redlab_ui.py is the REDLAB entrypoint people run by hand, so the built
+    # executable should come from exactly that file rather than __main__.py.
+    [os.path.join(PC_ROOT, 'redlab_ui.py')],
     pathex=[PC_ROOT],
     binaries=[],
     datas=[

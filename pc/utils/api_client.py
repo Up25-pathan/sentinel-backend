@@ -133,6 +133,13 @@ class ApiClient(QObject):
         self._get("/api/intelligence/macro", "macro_briefing")
 
     def seed_database(self):
+        """Only useful against a local development server.
+
+        A deployed instance deliberately refuses this with 403, because the
+        seed script writes fabricated events that would then be displayed as
+        real intelligence. Called from a menu entry, it will report that
+        refusal rather than silently doing nothing.
+        """
         self._post("/api/seed", {}, "seed")
 
     def _get(self, path, tag):
@@ -164,8 +171,19 @@ class ApiClient(QObject):
             self._sse_active = False
             self.sseStatusChanged.emit(False)
             reply.deleteLater()
+            # A dead stream is retried, but a token-less client must not retry
+            # at all: the server answers 401, the client retried on a linear
+            # backoff and never stopped, so "Host requires authentication" was
+            # logged indefinitely and counted against the rate limiter until it
+            # started answering 429.
+            if not self.token:
+                self._sse_retries = 0
+                self._sse_waiting_for_auth = True
+                return
             self._sse_retries += 1
-            delay = min(1000 * self._sse_retries, 10000)
+            # Exponential backoff with a ceiling, so a persistently failing
+            # stream cannot saturate the per-minute request budget.
+            delay = min(1000 * (2 ** (self._sse_retries - 1)), 60_000)
             QTimer.singleShot(delay, self.connect_sse)
             return
 

@@ -4,7 +4,7 @@ The reporting half of SENTINEL. CIC observes feeds, events and infrastructure
 state and renders what the backend actually returns; it does not act against
 targets. Offensive tooling lives in the separate REDLAB app.
 
-Run it with:  python redlab_ui.py
+Run it with:  python cic_ui.py
 """
 
 __version__ = "2.2.0"
