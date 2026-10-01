@@ -233,6 +233,21 @@ async function getOpenSkyAccessToken() {
     return openSkyTokenRequest;
 }
 
+function aviationDiagnostic(err) {
+    const parts = [];
+    if (err.status) parts.push('upstream HTTP ' + err.status);
+    if (err.name && err.name !== 'Error') parts.push('name=' + err.name);
+    let cause = err.cause;
+    let depth = 0;
+    while (cause && depth < 3) {
+        if (cause.code) parts.push('cause=' + cause.code);
+        else if (cause.message) parts.push('cause=' + String(cause.message).slice(0, 60));
+        cause = cause.cause;
+        depth++;
+    }
+    return parts.join(' ') || 'unknown';
+}
+
 app.get('/api/map/aviation', authMiddleware, async (req, res) => {
     const CACHE_TTL = 120000;
     if (Date.now() - aviationCache.time < CACHE_TTL && aviationCache.data) {
@@ -274,10 +289,12 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
                 : err.name === 'TimeoutError' || err.name === 'AbortError'
                     ? 'OpenSky request timed out; retrying shortly'
                     : 'Aviation feed unavailable';
-        console.warn('OpenSky proxy:', message);
+        const detail = aviationDiagnostic(err);
+        console.warn('OpenSky proxy:', message, '|', detail);
         const result = aviationCache.data
             ? { ...aviationCache.data, stale: true, error: message }
             : { aircraft: [], count: 0, error: message };
+        result.detail = detail;
         aviationFailureCache = { data: result, time: Date.now() };
         res.json(result);
     }
