@@ -192,7 +192,7 @@ app.get('/api/map/conflicts', authMiddleware, async (req, res) => {
 // ─── Aviation Data (JWT required — proxies OpenSky) ─────────────
 let aviationCache = { data: null, time: 0 };
 let aviationFailureCache = { data: null, time: 0 };
-const AVIATION_FAILURE_CACHE_TTL = 120000;
+const AVIATION_FAILURE_CACHE_TTL = 20000;
 const OPENSKY_CLIENT_ID = process.env.OPENSKY_CLIENT_ID || '';
 const OPENSKY_CLIENT_SECRET = process.env.OPENSKY_CLIENT_SECRET || '';
 const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
@@ -214,7 +214,7 @@ async function getOpenSkyAccessToken() {
                     client_id: OPENSKY_CLIENT_ID,
                     client_secret: OPENSKY_CLIENT_SECRET,
                 }),
-                signal: AbortSignal.timeout(10000),
+                signal: AbortSignal.timeout(30000),
             });
             if (!response.ok) {
                 const error = new Error(`OpenSky token request failed (HTTP ${response.status})`);
@@ -234,7 +234,7 @@ async function getOpenSkyAccessToken() {
 }
 
 app.get('/api/map/aviation', authMiddleware, async (req, res) => {
-    const CACHE_TTL = 30000;
+    const CACHE_TTL = 120000;
     if (Date.now() - aviationCache.time < CACHE_TTL && aviationCache.data) {
         return res.json(aviationCache.data);
     }
@@ -242,7 +242,7 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
         return res.json(aviationFailureCache.data);
     }
     try {
-        const opts = { signal: AbortSignal.timeout(10000) };
+        const opts = { signal: AbortSignal.timeout(30000) };
         const accessToken = await getOpenSkyAccessToken();
         if (accessToken) opts.headers = { 'Authorization': `Bearer ${accessToken}` };
         const resp = await fetch(OPENSKY_URL, opts);
