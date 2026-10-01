@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../db');
 const { clampInt } = require('../lib/query');
+const { requireAdminRole } = require('../middleware/auth');
 const router = express.Router();
 
 // GET /api/alerts — Get alerts (recent/unread)
@@ -37,7 +38,7 @@ router.get('/', (req, res) => {
 });
 
 // POST /api/alerts/:id/read — Mark alert as read
-router.post('/:id/read', (req, res) => {
+router.post('/:id/read', requireAdminRole, (req, res) => {
     try {
         const db = getDb();
         const result = db.prepare('UPDATE alerts SET is_read = 1 WHERE id = ?').run(req.params.id);
@@ -54,7 +55,7 @@ router.post('/:id/read', (req, res) => {
 });
 
 // POST /api/alerts/read-all — Mark all alerts as read
-router.post('/read-all', (req, res) => {
+router.post('/read-all', requireAdminRole, (req, res) => {
     try {
         const db = getDb();
         const result = db.prepare('UPDATE alerts SET is_read = 1 WHERE is_read = 0').run();

@@ -5,42 +5,56 @@ const { resolveJwtSecret, isUnset } = require('../env');
 const { logAction } = require('../services/audit-log');
 const router = express.Router();
 
-let _passwordHash = process.env.AUTH_PASSWORD_HASH || null;
-let _bcryptAvailable = true;
+const passwordHashCache = new Map();
 
-async function getPasswordHash() {
-    if (_passwordHash) return _passwordHash;
+function constantTimeEqual(left, right) {
+    const leftBuffer = Buffer.from(left);
+    const rightBuffer = Buffer.from(right);
+    return leftBuffer.length === rightBuffer.length
+        && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
 
-    if (isUnset(process.env.AUTH_PASSWORD)) {
-        throw new Error('AUTH_PASSWORD_HASH is not set');
+async function verifyPassword(password, role) {
+    const prefix = role === 'admin' ? 'AUTH' : 'AUTH_ANALYST';
+    const configuredHash = process.env[`${prefix}_PASSWORD_HASH`];
+    if (!isUnset(configuredHash)) {
+        try {
+            const bcrypt = require('bcrypt');
+            return await bcrypt.compare(password, configuredHash);
+        } catch (err) {
+            console.error(`${role} bcrypt compare failed:`, err.message);
+            throw new Error('bcrypt is unavailable');
+        }
     }
-    const plainPassword = String(process.env.AUTH_PASSWORD).trim();
 
-    if (!_bcryptAvailable) {
-        _passwordHash = plainPassword;
-        return _passwordHash;
+    const configuredPassword = process.env[`${prefix}_PASSWORD`];
+    if (isUnset(configuredPassword)) {
+        throw new Error(`${prefix}_PASSWORD or ${prefix}_PASSWORD_HASH is not set`);
+    }
+
+    const cachedHash = passwordHashCache.get(role);
+    if (cachedHash) {
+        const bcrypt = require('bcrypt');
+        return bcrypt.compare(password, cachedHash);
     }
 
     try {
         const bcrypt = require('bcrypt');
-        _passwordHash = await bcrypt.hash(plainPassword, 10);
-        console.log('🔐 Password hash generated (set AUTH_PASSWORD_HASH env var for production)');
+        const hash = await bcrypt.hash(String(configuredPassword).trim(), 10);
+        passwordHashCache.set(role, hash);
+        if (role === 'admin') {
+            console.log('🔐 Password hash generated (set AUTH_PASSWORD_HASH env var for production)');
+        }
+        return bcrypt.compare(password, hash);
     } catch (err) {
-        // Previously this latched off permanently and silently downgraded the
-        // whole auth path to a plaintext === comparison. Now it is loud, and
-        // the plain path is only used when explicitly enabled.
         console.error('❌ bcrypt unavailable:', err.message);
         if (!process.env.ALLOW_PLAINTEXT_PASSWORD) {
             throw new Error(
-                'bcrypt is unavailable. Install it, set AUTH_PASSWORD_HASH, or explicitly ' +
-                'set ALLOW_PLAINTEXT_PASSWORD=true to permit plaintext comparison.'
+                'bcrypt is unavailable. Set the password hash or explicitly allow plaintext comparison.'
             );
         }
-        _bcryptAvailable = false;
-        _passwordHash = plainPassword;
+        return constantTimeEqual(password, String(configuredPassword).trim());
     }
-
-    return _passwordHash;
 }
 
 // POST /api/auth/login
@@ -55,33 +69,26 @@ router.post('/login', async (req, res) => {
         const sanitizedUsername = username.trim();
         const sanitizedPassword = password.trim();
 
-        const validUsername = isUnset(process.env.AUTH_USERNAME) ? 'admin' : String(process.env.AUTH_USERNAME).trim();
+        const adminUsername = isUnset(process.env.AUTH_USERNAME) ? 'admin' : String(process.env.AUTH_USERNAME).trim();
+        const analystUsername = isUnset(process.env.AUTH_ANALYST_USERNAME)
+            ? null : String(process.env.AUTH_ANALYST_USERNAME).trim();
+        const role = sanitizedUsername === adminUsername
+            ? 'admin'
+            : analystUsername && sanitizedUsername === analystUsername
+                ? 'analyst'
+                : null;
 
-        if (sanitizedUsername !== validUsername) {
+        if (!role) {
             logAction('AUTH_FAILED', `Login attempt with username '${sanitizedUsername}'`);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        let hash;
+        let isValid;
         try {
-            hash = await getPasswordHash();
+            isValid = await verifyPassword(sanitizedPassword, role);
         } catch (configErr) {
-            console.error('Auth configuration error:', configErr.message);
+            console.error(`${role} auth configuration error:`, configErr.message);
             return res.status(500).json({ error: 'Server authentication not configured' });
-        }
-
-        let isValid = false;
-
-        if (_bcryptAvailable) {
-            try {
-                const bcrypt = require('bcrypt');
-                isValid = await bcrypt.compare(sanitizedPassword, hash);
-            } catch (err) {
-                console.error('bcrypt compare failed:', err.message);
-                isValid = false;
-            }
-        } else {
-            isValid = sanitizedPassword === hash;
         }
 
         if (isValid) {
@@ -96,7 +103,7 @@ router.post('/login', async (req, res) => {
             }
 
             const token = jwt.sign(
-                { username: sanitizedUsername, role: 'admin' },
+                { username: sanitizedUsername, role },
                 secret,
                 { expiresIn: '30d' }
             );
@@ -104,7 +111,7 @@ router.post('/login', async (req, res) => {
             logAction('AUTH_LOGIN', `User '${sanitizedUsername}' authenticated successfully`);
             return res.json({
                 token,
-                user: { username: sanitizedUsername, role: 'admin' },
+                user: { username: sanitizedUsername, role },
                 expiresIn: '30d'
             });
         }
