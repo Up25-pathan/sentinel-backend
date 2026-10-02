@@ -205,6 +205,12 @@ const ADSB_LOL_ENDPOINTS = [
 // call identifies itself explicitly.
 const UPSTREAM_HEADERS = { 'User-Agent': 'SENTINEL/1.0 (geopolitical-intelligence)' };
 const OPENSKY_RETRY_MS = 10 * 60 * 1000;
+// Aircraft that have not been heard from in this long are dropped so the map
+// does not keep showing aircraft that have already landed.
+const AIRCRAFT_MAX_AGE_SECONDS = 120;
+const FEET_TO_METRES = 0.3048;
+const KT_TO_MS = 0.514444;
+const FT_MIN_TO_MS = 0.00508;
 let openSkyBlockedUntil = 0;
 let openSkyToken = null;
 let openSkyTokenExpiresAt = 0;
@@ -243,9 +249,14 @@ async function getOpenSkyAccessToken() {
 }
 
 function normaliseAdsbLol(raw) {
-    return (raw.ac || []).filter(a => a.lat != null && a.lon != null).map(a => ({
+    return (raw.ac || [])
+        .filter(a => a.lat != null && a.lon != null)
+        .filter(a => !(Number.isFinite(a.seen) && a.seen > AIRCRAFT_MAX_AGE_SECONDS))
+        .map(a => ({
         icao24: a.icao24 || a.hex || '',
         callsign: (a.flight || '').trim(),
+        aircraft_type: (a.t || '').trim(),
+        registration: (a.r || '').trim(),
         origin_country: a.country_iso_name || '',
         lat: a.lat,
         lng: a.lon,
@@ -254,9 +265,19 @@ function normaliseAdsbLol(raw) {
         // contract and avoid altitudes that are 3x too high and speeds 2x off.
         // alt_baro is the string "ground" for aircraft on the ground, which
         // must not be coerced into NaN.
-        altitude: Number.isFinite(a.alt_baro) ? a.alt_baro / 3.28084 : null,
-        velocity: Number.isFinite(a.gs) ? a.gs / 1.94384 : null,
+        altitude: Number.isFinite(a.alt_baro) ? a.alt_baro * FEET_TO_METRES : null,
+        geometric_altitude: Number.isFinite(a.alt_geom) ? a.alt_geom * FEET_TO_METRES : null,
+        velocity: Number.isFinite(a.gs) ? a.gs * KT_TO_MS : null,
+        vertical_rate: Number.isFinite(a.geom_rate) ? a.geom_rate * FT_MIN_TO_MS : null,
         heading: a.true_heading != null ? a.true_heading : (a.track != null ? a.track : null),
+        on_ground: a.alt_baro === 'ground' || !(Number.isFinite(a.gs) || Number.isFinite(a.alt_baro)),
+        squawk: a.squawk || null,
+        category: a.category || null,
+        emergency: (a.emergency && a.emergency !== 'none') ? a.emergency : null,
+        age_seconds: Number.isFinite(a.seen) ? a.seen : null,
+        nic: a.nic != null ? a.nic : null,
+        nac_p: a.nac_p != null ? a.nac_p : null,
+        sil: a.sil != null ? a.sil : null,
     }));
 }
 
@@ -330,15 +351,28 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
             throw error;
         }
         const raw = await resp.json();
+        const observedAt = Number(raw.time) || Math.floor(Date.now() / 1000);
         const states = (raw.states || []).filter(s => s[5] && s[6]).map(s => ({
             icao24: s[0],
             callsign: (s[1] || '').trim(),
-            origin_country: s[2],
+            aircraft_type: '',
+            registration: '',
+            origin_country: s[2] || '',
             lat: s[6],
             lng: s[5],
             altitude: s[7],
+            geometric_altitude: s[13] != null ? s[13] : null,
             velocity: s[9],
+            vertical_rate: s[11] != null ? s[11] : null,
             heading: s[10],
+            on_ground: !!s[8],
+            squawk: s[14] || null,
+            category: s[17] != null ? s[17] : null,
+            emergency: null,
+            age_seconds: Number.isFinite(s[4]) ? Math.max(0, observedAt - s[4]) : null,
+            nic: null,
+            nac_p: null,
+            sil: null,
         }));
         const result = { aircraft: states, count: states.length, source: 'opensky', timestamp: new Date().toISOString() };
         aviationCache = { data: result, time: Date.now() };
