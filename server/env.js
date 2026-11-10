@@ -179,6 +179,8 @@ function configStatus() {
         apiSecretKey: isUnset(process.env.API_SECRET_KEY) ? 'disabled' : 'configured',
         jwtSecret: isUnset(process.env.JWT_SECRET) ? 'generated (set JWT_SECRET to persist)' : 'configured',
         authUsername: isUnset(process.env.AUTH_USERNAME) ? 'admin (default)' : 'configured',
+        vaultStorage: isUnset(process.env.VAULT_DATABASE_URL) ? 'unconfigured' : 'configured',
+        vaultPasskey: isUnset(process.env.VAULT_PASSKEY) ? 'disabled' : 'configured',
         analystAccount: !isUnset(process.env.AUTH_ANALYST_USERNAME)
             && (!isUnset(process.env.AUTH_ANALYST_PASSWORD) || !isUnset(process.env.AUTH_ANALYST_PASSWORD_HASH))
             ? 'configured' : 'disabled',
@@ -220,7 +222,12 @@ function validateEnv() {
     const hasAnalystPassword = !isUnset(process.env.AUTH_ANALYST_PASSWORD)
         || !isUnset(process.env.AUTH_ANALYST_PASSWORD_HASH);
     if (hasAnalystUsername !== hasAnalystPassword) {
-        warnings.push('Analyst login is incomplete — set both AUTH_ANALYST_USERNAME and an analyst password or hash.');
+        warnings.push('Analyst login is incomplete �?" set both AUTH_ANALYST_USERNAME and an analyst password or hash.');
+    }
+    if (isUnset(process.env.VAULT_PASSKEY)) {
+        warnings.push('VAULT_PASSKEY is not set; the encrypted vault is disabled.');
+    } else if (!/^\d{6}$/.test(String(process.env.VAULT_PASSKEY))) {
+        warnings.push('VAULT_PASSKEY is set but is not exactly 6 digits; the encrypted vault is disabled.');
     }
     if (isUnset(process.env.NEWS_API_KEY)) {
         warnings.push('NEWS_API_KEY not configured — NewsAPI ingestion disabled.');

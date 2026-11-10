@@ -3,9 +3,64 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { resolveJwtSecret, isUnset } = require('../env');
 const { logAction } = require('../services/audit-log');
+const { verifyToken, currentTokenVersion, JWT_ALGORITHM } = require('../middleware/auth');
 const router = express.Router();
 
 const passwordHashCache = new Map();
+
+/**
+ * Token lifetime. Was a flat 30 days, which meant a single leaked token stayed
+ * usable for a month. A desktop client authenticates once per launch, so a much
+ * shorter window costs the operator nothing while shrinking exposure sharply.
+ * Override with AUTH_TOKEN_TTL (e.g. "8h", "24h").
+ */
+function tokenTtl() {
+    const configured = process.env.AUTH_TOKEN_TTL;
+    if (configured && !isUnset(configured)) return String(configured).trim();
+    return '12h';
+}
+
+/**
+ * Per-account lockout.
+ *
+ * The rate limiter is keyed by client address, so a distributed guessing
+ * campaign — or any attacker able to rotate the apparent source IP — was never
+ * actually throttled, and there was no account lockout at all. This counts
+ * consecutive failures for the username itself.
+ */
+const MAX_ACCOUNT_FAILURES = 8;
+const ACCOUNT_LOCKOUT_MS = 15 * 60 * 1000;
+const accountFailures = new Map();
+
+function lockoutRemaining(username) {
+    const entry = accountFailures.get(username);
+    if (!entry) return 0;
+    const remaining = entry.until - Date.now();
+    if (remaining <= 0) {
+        accountFailures.delete(username);
+        return 0;
+    }
+    return remaining;
+}
+
+function recordFailure(username) {
+    const now = Date.now();
+    const entry = accountFailures.get(username);
+    if (!entry || now > entry.until) {
+        accountFailures.set(username, { count: 1, until: now + ACCOUNT_LOCKOUT_MS });
+        return 1;
+    }
+    entry.count += 1;
+    if (entry.count >= MAX_ACCOUNT_FAILURES) {
+        entry.until = now + ACCOUNT_LOCKOUT_MS;
+        return entry.count;
+    }
+    return entry.count;
+}
+
+function clearFailures(username) {
+    accountFailures.delete(username);
+}
 
 function constantTimeEqual(left, right) {
     const leftBuffer = Buffer.from(left);
@@ -83,6 +138,18 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
+        // Checked before the password comparison so a locked account cannot be
+        // used as an oracle, and so the expensive bcrypt hash is not run for
+        // every attempt against a known-locked name.
+        const lockedFor = lockoutRemaining(sanitizedUsername);
+        if (lockedFor > 0) {
+            const minutes = Math.ceil(lockedFor / 60000);
+            logAction('AUTH_FAILED', `Login blocked for '${sanitizedUsername}' (account locked)`);
+            return res.status(429).json({
+                error: `Account temporarily locked. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`
+            });
+        }
+
         let isValid;
         try {
             isValid = await verifyPassword(sanitizedPassword, role);
@@ -102,21 +169,28 @@ router.post('/login', async (req, res) => {
                 return res.status(500).json({ error: 'Server authentication not configured' });
             }
 
+            const ttl = tokenTtl();
             const token = jwt.sign(
-                { username: sanitizedUsername, role },
+                {
+                    username: sanitizedUsername,
+                    role,
+                    ver: currentTokenVersion(),
+                },
                 secret,
-                { expiresIn: '30d' }
+                { algorithm: JWT_ALGORITHM, expiresIn: ttl }
             );
 
+            clearFailures(sanitizedUsername);
             logAction('AUTH_LOGIN', `User '${sanitizedUsername}' authenticated successfully`);
             return res.json({
                 token,
                 user: { username: sanitizedUsername, role },
-                expiresIn: '30d'
+                expiresIn: ttl
             });
         }
 
-        logAction('AUTH_FAILED', `Invalid credentials for user '${sanitizedUsername}'`);
+        const failures = recordFailure(sanitizedUsername);
+        logAction('AUTH_FAILED', `Invalid credentials for user '${sanitizedUsername}' (${failures} consecutive)`);
         return res.status(401).json({ error: 'Invalid credentials' });
     } catch (err) {
         console.error('Auth error:', err);
@@ -131,7 +205,9 @@ router.get('/verify', (req, res) => {
 
     try {
         const token = authHeader.split(' ')[1];
-        const decoded = jwt.verify(token, resolveJwtSecret());
+        // Same verifier as the HTTP middleware and the WebSocket upgrade, so a
+        // token revoked by bumping TOKEN_VERSION is rejected here too.
+        const decoded = verifyToken(token);
         res.json({ valid: true, user: decoded });
     } catch {
         res.status(401).json({ valid: false });

@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
+const net = require('net');
 const morgan = require('morgan');
 const helmet = require('helmet');
 const { WebSocketServer } = require('ws');
@@ -10,7 +11,9 @@ const { validateEnv, resolveJwtSecret, configStatus } = require('./env');
 validateEnv();
 
 const { getDb, closeDb } = require('./db');
-const { authMiddleware, apiKeyMiddleware, requireAdminRole, securityHeaders } = require('./middleware/auth');
+const { authMiddleware, apiKeyMiddleware, requireAdminRole, securityHeaders, verifyToken } = require('./middleware/auth');
+const { isUnset } = require('./env');
+const { safeEqual } = require('./middleware/auth');
 const { startScheduler } = require('./scheduler');
 const { startBroadcaster, stopBroadcaster, broadcasterStatus } = require('./broadcaster');
 const { sourceHealth } = require('./services/source-health');
@@ -27,13 +30,98 @@ const osintRoutes = require('./routes/osint');
 const darkwebRoutes = require('./routes/darkweb');
 const auditRoutes = require('./routes/audit');
 const assetRoutes = require('./routes/assets');
+const vaultRoutes = require('./routes/vault');
 const { logAction } = require('./services/audit-log');
 
 const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-app.set('trust proxy', 1);
+
+/**
+ * Resolve the real client address for rate-limiting purposes.
+ *
+ * Background: this app is deployed behind exactly one TLS-terminating proxy, so
+ * X-Forwarded-For arrives as "<spoofable...>, <address the proxy observed>".
+ * Express's `req.ip` under `trust proxy = 1` can return the attacker-supplied
+ * part of that chain, which meant a client could send a fresh X-Forwarded-For on
+ * every request and be handed a fresh rate-limit bucket each time — fully
+ * defeating the login brute-force limiter, while also letting the limiter's
+ * in-memory store grow by one entry per forged value.
+ *
+ * `TRUSTED_PROXY_HOPS` makes the trust decision explicit instead of implied:
+ *
+ *   unset / 0  -> the TCP peer address is authoritative and the header is
+ *                 ignored entirely. Unforgeable. Use this whenever the server
+ *                 is bound to a publicly routable interface.
+ *   1          -> exactly one trusted proxy sits in front; the rightmost header
+ *                 entry is the address that proxy observed. This is the correct
+ *                 setting for the Render deployment.
+ *
+ * Any value is rejected as malformed rather than silently coerced, because
+ * "trust the client's own header" is precisely the vulnerability this replaced.
+ */
+const TRUSTED_PROXY_HOPS = (() => {
+    const raw = String(process.env.TRUSTED_PROXY_HOPS ?? '1').trim();
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isInteger(n) || n < 0 || n > 10) {
+        console.warn(
+            `[security] Ignoring invalid TRUSTED_PROXY_HOPS=${JSON.stringify(raw)}; using 0 (trust TCP peer only).`
+        );
+        return 0;
+    }
+    return n;
+})();
+
+// Express must agree with the limiter about how many proxies are in front of us.
+// Left at a hard-coded 1 it silently disagreed with TRUSTED_PROXY_HOPS=0, which
+// is how `req.ip` ended up reading the attacker-controlled end of X-Forwarded-For
+// on the login route even after the limiter itself had been fixed.
+app.set('trust proxy', TRUSTED_PROXY_HOPS);
+
+function realClientIp(req) {
+    // Derive from the socket, not from req.ip: the latter is already influenced by
+    // the trust setting above and this keeps a single source of truth.
+    const peer = req.socket?.remoteAddress || '';
+
+    if (TRUSTED_PROXY_HOPS === 0) {
+        return net.isIP(peer) ? peer : 'unknown';
+    }
+
+    const header = req.headers['x-forwarded-for'];
+    const chain = Array.isArray(header)
+        ? header
+        : (typeof header === 'string' && header ? header.split(',') : []);
+
+    // Walk right-to-left and skip exactly the number of proxy hops we trust. If
+    // the client sent fewer entries than there are trusted hops, the chain is
+    // short and cannot be trusted at all: fall back to the peer address.
+    for (let i = chain.length - TRUSTED_PROXY_HOPS; i >= 0; i--) {
+        const candidate = String(chain[i]).trim();
+        if (net.isIP(candidate)) return candidate;
+    }
+
+    return net.isIP(peer) ? peer : 'unknown';
+}
+
+/**
+ * Build a rate-limit key from a client address.
+ *
+ * express-rate-limit v7+ refuses custom key generators that can return a bare
+ * IPv6 address, because a single host is routinely handed a whole /64 and can
+ * trivially rotate addresses within it to get fresh buckets — the same class of
+ * bypass as the X-Forwarded-For problem above. Normalising to the /64 prefix
+ * (or /48 for the larger allocations) is the vendor-documented remedy.
+ */
+function rateLimitKey(req) {
+    const ip = realClientIp(req);
+    // Strip the IPv4-mapped IPv6 wrapper ("::ffff:1.2.3.4") so a dual-stack
+    // client cannot get separate buckets for its two representations.
+    const bare = ip.startsWith('::ffff:') && net.isIPv4(ip.slice(7)) ? ip.slice(7) : ip;
+    if (!net.isIPv6(bare)) return bare;
+    const parts = bare.split(':');
+    return net.isIPv4(parts[0]) ? parts[0] : `${parts.slice(0, 3).join(':')}::/64`;
+}
 
 // ─── Rate Limiting ─────────────────────────────────────────────
 const generalLimiter = rateLimit({
@@ -45,6 +133,7 @@ const generalLimiter = rateLimit({
     max: 600,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: rateLimitKey,
     message: { error: 'Too many requests, please try again later.' }
 });
 
@@ -56,6 +145,7 @@ const dataLimiter = rateLimit({
     max: 90,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: rateLimitKey,
     message: { error: 'Data feed rate limit reached, please retry shortly.' }
 });
 
@@ -64,6 +154,7 @@ const authLimiter = rateLimit({
     max: 20,
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: rateLimitKey,
     // A successful login must not consume the budget. Otherwise the desktop
     // app — which authenticates once per launch — burns attempts and locks
     // itself out of its own server after a handful of restarts.
@@ -79,36 +170,106 @@ const authLimiter = rateLimit({
 // no auth, no API key and no rate limit at all.
 app.disable('x-powered-by');
 app.use(helmet());
-app.use(cors());
-app.use(express.json());
-app.use(morgan('combined'));
+
+// Explicit origin allowlist instead of cors()'s `Access-Control-Allow-Origin: *`.
+// Tokens are bearer-only today so a wildcard is not directly exploitable, but it
+// leaves the app one move away from leaking data the moment ambient auth
+// (cookies) is introduced. Unlisted origins still work from non-browser clients
+// such as the desktop app, which sends no Origin header at all.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+app.use(cors({
+    origin(origin, callback) {
+        if (!origin || ALLOWED_ORIGINS.length === 0 || ALLOWED_ORIGINS.includes(origin)) {
+            return callback(null, true);
+        }
+        return callback(null, false);
+    },
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key'],
+    maxAge: 600
+}));
+
 app.use(securityHeaders);
+
+// Throttling is registered before body parsing and logging on purpose. Body
+// parsing and morgan were previously ahead of the limiter, so an unauthenticated
+// client could force a full 100 kB JSON parse plus a synchronous stdout write per
+// request at line rate — and every request the limiter then rejected had still
+// been parsed and logged.
 app.use(generalLimiter);
+app.use(express.json({ limit: '100kb' }));
+app.use(morgan('combined'));
 app.use(apiKeyMiddleware);
 
 // ─── SSE Clients ────────────────────────────────────────────────
 const sseClients = new Set();
 
+// Handles are hoisted out of start() so shutdown() can drain them. Previously the
+// HTTP server was never closed at all, and the WebSocket server was unreachable
+// from the shutdown path.
+let httpServer = null;
+let wss = null;
+let wsPing = null;
+
+// A stalled reader would otherwise let the write buffer grow without limit.
+// Beyond this we drop the subscriber; the desktop client reconnects on its own.
+const SSE_MAX_BUFFERED_BYTES = 1024 * 1024;
+const SSE_MAX_CLIENTS = 50;
+
 function broadcastSSE(event, data) {
     const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const client of sseClients) {
-        try { client.write(msg); } catch (e) { sseClients.delete(client); }
+        try {
+            if (client.writableLength > SSE_MAX_BUFFERED_BYTES) {
+                sseClients.delete(client);
+                client.end();
+                continue;
+            }
+            client.write(msg);
+        } catch (e) {
+            sseClients.delete(client);
+        }
     }
 }
 
-// ─── Health Check (public — no auth, for load balancers) ───────
+/**
+ * Public health check — no auth, for load balancers.
+ *
+ * Source state and broadcaster internals used to be returned verbatim. Each
+ * source's `lastError` carries raw upstream error strings and the broadcaster
+ * block exposed retry counters and internal row ids, all readable without a
+ * token. Only a coarse per-source status is published now; the full detail
+ * stays behind the authenticated admin surface.
+ */
 app.get('/api/health', (req, res) => {
     const db = getDb();
     const eventCount = db.prepare('SELECT COUNT(*) as count FROM events').get();
     const alertCount = db.prepare('SELECT COUNT(*) as count FROM alerts WHERE is_read = 0').get();
 
+    // Iterate the source list itself. Object.entries(sourceHealth()) walked the
+    // summary object's keys instead (coverage/total/healthy/...), so every entry
+    // resolved to info?.status === undefined and the public endpoint advertised
+    // seven sources all reported as "unknown" regardless of real state.
+    const health = sourceHealth();
+    const sources = {};
+    for (const source of health.sources || []) {
+        // Coarse on purpose: name + status only. lastError can carry upstream
+        // response bodies and query fragments, so it stays on the admin surface.
+        sources[source.name] = { status: source.status };
+    }
+
     res.json({
-        status: 'ok',
+        status: health.broken > 0 ? 'degraded' : 'ok',
         timestamp: new Date().toISOString(),
         events: eventCount.count,
         unread_alerts: alertCount.count,
-        broadcaster: broadcasterStatus(),
-        sources: sourceHealth(),
+        broadcaster: { running: broadcasterStatus().running },
+        coverage: health.coverage,
+        sources,
         version: '1.0.0'
     });
 });
@@ -119,6 +280,12 @@ app.get('/', (req, res) => {
 
 // ─── SSE Stream (JWT required) ──────────────────────────────────
 app.get('/api/events/stream', authMiddleware, (req, res) => {
+    // The subscriber set was previously unbounded and unmonitored, so anonymous
+    // or forgotten clients could accumulate and hold server memory open.
+    if (sseClients.size >= SSE_MAX_CLIENTS) {
+        return res.status(503).json({ error: 'Too many live streams, retry shortly.' });
+    }
+
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -419,6 +586,7 @@ app.use('/api/osint', authMiddleware, osintRoutes);
 app.use('/api/darkweb', authMiddleware, darkwebRoutes);
 app.use('/api/audit', authMiddleware, requireAdminRole, auditRoutes);
 app.use('/api/assets', authMiddleware, requireAdminRole, assetRoutes);
+app.use('/api/vault', authMiddleware, vaultRoutes);
 
 // ─── Seed Endpoint (protected, dev-only) ────────────────────────
 // db/seed.js inserts INVENTED geopolitical events, alerts and dark-web
@@ -445,8 +613,12 @@ app.post('/api/seed', authMiddleware, requireAdminRole, (req, res) => {
 });
 
 // ─── Export/Backup Route ───────────────────────────────────────
+// Full-database dump. Admin-only: the export includes the `assets` table, which
+// stores Credential rows, so leaving this behind authMiddleware alone let the
+// read-only analyst role extract credentials that POST /api/assets restricts to
+// admins.
 const { exportAll } = require('./services/export');
-app.get('/api/export', authMiddleware, (req, res) => {
+app.get('/api/export', authMiddleware, requireAdminRole, (req, res) => {
     try {
         const days = clampDays(req.query.days, { min: 1, max: 3650, fallback: 30 });
         const data = exportAll(days);
@@ -469,7 +641,9 @@ app.use((err, req, res, next) => {
     // traces and no root cause could be recovered.
     console.error(`❌ ${req.method} ${req.originalUrl} — ${err.message}`);
     if (err.stack) console.error(err.stack);
-    res.status(err.status || 500).json({ error: 'Internal server error' });
+    res.status(err.status || 500).json({
+        error: err.status && err.status < 500 ? err.message : 'Internal server error',
+    });
 });
 
 // ─── Start Server ──────────────────────────────────────────────
@@ -477,6 +651,7 @@ function start() {
     getDb();
 
     const server = http.createServer(app);
+    httpServer = server;
 
     // A port conflict surfaces as an async 'error' event on the WebSocketServer,
     // which is outside the try/catch around start(). Unhandled, it killed the
@@ -495,14 +670,125 @@ function start() {
     });
 
     // ─── WebSocket Server ──────────────────────────────────────
-    const wss = new WebSocketServer({ server, path: '/ws' });
+    // noServer: true so the upgrade is authenticated by our own handler *before*
+    // the handshake completes. The feed used to accept any anonymous socket: the
+    // HTTP upgrade never touched the Express middleware chain, so every field
+    // that /api/events protects with a JWT — titles, summaries, AI briefs, bias
+    // analysis, coordinates, risk levels — was streamed to whoever asked. It was
+    // also an unbounded memory-exhaustion path, since the client set was never
+    // capped and send() was called with no backpressure check.
+    const WS_MAX_CLIENTS = 50;
+    const WS_MAX_BUFFERED_BYTES = 1024 * 1024;
+    const WS_PING_INTERVAL_MS = 30000;
+
+    wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
     wss.on('error', (err) => console.error('WebSocket server error:', err.message));
 
+    server.on('upgrade', (req, socket, head) => {
+        let pathname = '';
+        try {
+            pathname = new URL(req.url, `http://${req.headers.host || 'localhost'}`).pathname;
+        } catch {
+            pathname = '';
+        }
+        if (pathname !== '/ws') {
+            socket.destroy();
+            return;
+        }
+
+        let decoded;
+        try {
+            decoded = verifyWebSocketToken(req);
+        } catch (err) {
+            const status = err.status || 401;
+            socket.write(
+                `HTTP/1.1 ${status} ${status === 401 ? 'Unauthorized' : status === 403 ? 'Forbidden' : 'Service Unavailable'}\r\n` +
+                'Connection: close\r\n' +
+                'Content-Length: 0\r\n\r\n'
+            );
+            socket.destroy();
+            return;
+        }
+
+        wss.handleUpgrade(req, socket, head, (ws) => {
+            ws.user = decoded;
+            ws.isAlive = true;
+            wss.emit('connection', ws, req);
+        });
+    });
+
+    function verifyWebSocketToken(req) {
+        if (wss.clients.size >= WS_MAX_CLIENTS) {
+            const err = new Error('Too many websocket clients');
+            err.status = 503;
+            throw err;
+        }
+
+        // An HTTP upgrade never traverses the Express chain, so apiKeyMiddleware
+        // never runs for /ws. If API_SECRET_KEY is configured, the socket stream
+        // would otherwise be reachable with nothing but a stolen JWT — i.e. the
+        // second factor that guards every HTTP route was silently absent here.
+        const configuredKey = process.env.API_SECRET_KEY;
+        if (configuredKey && !isUnset(configuredKey)) {
+            const supplied = req.headers['x-api-key'];
+            if (!supplied || !safeEqual(String(supplied), configuredKey)) {
+                const err = new Error('Invalid API key');
+                err.status = 403;
+                throw err;
+            }
+        }
+
+        // Desktop clients can set headers freely; browsers cannot, so the token
+        // may also arrive as a query parameter.
+        let token = null;
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.slice(7).trim();
+        }
+        if (!token) {
+            try {
+                token = new URL(req.url, 'http://localhost').searchParams.get('token');
+            } catch {
+                token = null;
+            }
+        }
+        if (!token) {
+            const err = new Error('Missing token');
+            err.status = 401;
+            throw err;
+        }
+
+        try {
+            return verifyToken(token);
+        } catch (err) {
+            const wrapped = new Error('Invalid or expired token');
+            wrapped.status = 401;
+            throw wrapped;
+        }
+    }
+
+    // Keepalive: half-open sockets otherwise linger in wss.clients forever and
+    // are re-iterated on every single broadcast.
+    const wsPingTimer = setInterval(() => {
+        for (const client of wss.clients) {
+            if (client.isAlive === false) {
+                client.terminate();
+                continue;
+            }
+            client.isAlive = false;
+            try { client.ping(); } catch { /* closing */ }
+        }
+    }, WS_PING_INTERVAL_MS);
+    wsPingTimer.unref();
+    wsPing = wsPingTimer;
+
     wss.on('connection', (ws, req) => {
-        console.log(`🔌 WS client connected from ${req.socket.remoteAddress}`);
+        console.log(`🔌 WS client connected (${req.socket.remoteAddress}, ${ws.user?.role || 'unknown'})`);
 
         ws.send(JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() }));
+
+        ws.on('pong', () => { ws.isAlive = true; });
 
         ws.on('close', () => {
             console.log('🔌 WS client disconnected');
@@ -513,23 +799,27 @@ function start() {
         });
     });
 
+    /** Send only if the socket is open and its buffer is not already saturated. */
+    function sendToSocket(client, payload) {
+        if (client.readyState !== 1) return;
+        if (client.bufferedAmount > WS_MAX_BUFFERED_BYTES) {
+            try { client.close(1013, 'Client too slow'); } catch { /* closing */ }
+            return;
+        }
+        try { client.send(payload); } catch { /* closing */ }
+    }
+
     // ─── Event Broadcast ──────────────────────────────────────
     eventBus.on('new_event', (event) => {
         broadcastSSE('new_event', event);
-        wss.clients.forEach((client) => {
-            if (client.readyState === 1) {
-                client.send(JSON.stringify({ type: 'new_event', data: event }));
-            }
-        });
+        const payload = JSON.stringify({ type: 'new_event', data: event });
+        wss.clients.forEach((client) => sendToSocket(client, payload));
     });
 
     eventBus.on('new_alert', (alert) => {
         broadcastSSE('new_alert', alert);
-        wss.clients.forEach((client) => {
-            if (client.readyState === 1) {
-                client.send(JSON.stringify({ type: 'new_alert', data: alert }));
-            }
-        });
+        const payload = JSON.stringify({ type: 'new_alert', data: alert });
+        wss.clients.forEach((client) => sendToSocket(client, payload));
     });
 
     server.listen(PORT, '0.0.0.0', () => {
@@ -558,21 +848,75 @@ function start() {
 
 function shutdown(signal) {
     console.log(`\n🛑 Shutting down (${signal})...`);
+
+    // Hard deadline: Render only grants a short grace period before SIGKILL, so
+    // a stuck connection cannot be allowed to hold the process open.
+    const forcedExit = setTimeout(() => {
+        console.error('⚠️  Graceful shutdown timed out after 10s — forcing exit.');
+        process.exit(1);
+    }, 10000);
+    forcedExit.unref();
+
+    if (wsPing) clearInterval(wsPing);
+
     stopBroadcaster();
+
+    // Tell every live subscriber we are going away so the desktop client shows a
+    // disconnected state immediately instead of silently stalling on a stream
+    // that will never produce another event.
     for (const client of sseClients) {
         try { client.end(); } catch { /* already closed */ }
     }
     sseClients.clear();
-    closeDb();
-    process.exit(0);
+
+    if (wss) {
+        for (const client of wss.clients) {
+            try { client.close(1001, 'Server shutting down'); } catch { /* already closing */ }
+        }
+    }
+
+    // server.close() stops new connections but waits for in-flight requests to
+    // finish. Without it the previous shutdown called closeDb() and process.exit()
+    // immediately, cutting every live request and SSE stream mid-response on
+    // each deploy.
+    const finish = (err) => {
+        if (err) console.error('Error while closing HTTP server:', err.message);
+        clearTimeout(forcedExit);
+        closeDb();
+        console.log('👋 Shutdown complete.');
+        process.exit(err ? 1 : 0);
+    };
+
+    if (!httpServer) return finish(null);
+    httpServer.close(finish);
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-try {
-    start();
-} catch (err) {
-    console.error('\n❌ Server failed to start:', err.message);
-    process.exit(1);
+// Node ≥15 terminates the process on an unhandled rejection by default, and no
+// guard existed anywhere in the codebase — so a single missed .catch in a cron
+// job or a background feed would take the whole server down. Log loudly, then
+// keep serving for rejections; an uncaught exception is not safely recoverable.
+process.on('unhandledRejection', (reason) => {
+    console.error('❌ Unhandled promise rejection:', reason instanceof Error ? reason.stack : reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('❌ Uncaught exception:', err && err.stack ? err.stack : err);
+    shutdown('uncaughtException');
+});
+
+// Exporting the app lets a test suite drive it in-process. Guarded on
+// require.main so that `require('./server')` for testing does not also bind a
+// port, start the scheduler, or install the signal/exception handlers above.
+module.exports = { app, realClientIp, rateLimitKey, shutdown };
+
+if (require.main === module) {
+    try {
+        start();
+    } catch (err) {
+        console.error('\n❌ Server failed to start:', err.message);
+        process.exit(1);
+    }
 }

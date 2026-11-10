@@ -2,6 +2,7 @@ const express = require('express');
 const { getDb } = require('../db');
 const { clampInt } = require('../lib/query');
 const { requireAdminRole } = require('../middleware/auth');
+const { logAction } = require('../services/audit-log');
 const router = express.Router();
 
 // GET /api/alerts — Get alerts (recent/unread)
@@ -38,7 +39,14 @@ router.get('/', (req, res) => {
 });
 
 // POST /api/alerts/:id/read — Mark alert as read
-router.post('/:id/read', requireAdminRole, (req, res) => {
+//
+// Acknowledging an alert is routine triage, not a privileged action, and it was
+// previously admin-only. That left the read-only analyst role — whose entire
+// purpose is monitoring and triage — permanently unable to clear an alert, and it
+// created an inconsistency with /api/export, which *is* correctly admin-gated
+// because it leaks credential rows. Any authenticated operator may now
+// acknowledge; bulk "read all" stays admin-only since it affects the whole queue.
+router.post('/:id/read', (req, res) => {
     try {
         const db = getDb();
         const result = db.prepare('UPDATE alerts SET is_read = 1 WHERE id = ?').run(req.params.id);
@@ -47,6 +55,7 @@ router.post('/:id/read', requireAdminRole, (req, res) => {
             return res.status(404).json({ error: 'Alert not found' });
         }
 
+        logAction('ALERT_ACKNOWLEDGED', `Alert '${req.params.id}' acknowledged by '${req.user?.username || 'unknown'}'`);
         res.json({ success: true });
     } catch (err) {
         console.error('Error marking alert as read:', err);

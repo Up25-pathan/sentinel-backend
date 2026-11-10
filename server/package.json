@@ -7,7 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "seed": "node db/seed.js",
-    "keepalive": "node keepalive.js"
+    "keepalive": "node keepalive.js",
+    "lint": "node scripts/lint.js"
   },
   "dependencies": {
     "@heyputer/puter.js": "^2.2.10",
@@ -24,6 +25,7 @@
     "jsonwebtoken": "^9.0.0",
     "morgan": "^1.11.0",
     "node-cron": "^3.0.3",
+    "pg": "^8.23.1",
     "rss-parser": "^3.13.0",
     "uuid": "^10.0.0",
     "ws": "^8.21.0"

@@ -1,5 +1,0 @@
-textual
-rich
-docker
-psutil
-sqlite-utils

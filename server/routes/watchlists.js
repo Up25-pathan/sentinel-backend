@@ -19,8 +19,21 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
     const { keyword, threshold } = req.body;
 
-    if (!keyword) {
+    if (!keyword || typeof keyword !== 'string') {
         return res.status(400).json({ error: 'Keyword is required' });
+    }
+
+    // `threshold` used to be passed straight from the body into an INTEGER
+    // column with no type check. SQLite applies type ordering across storage
+    // classes, so a TEXT value made `count >= wl.threshold` permanently false —
+    // the watchlist was created, reported as active, and could never fire.
+    let thresholdValue = 3;
+    if (threshold !== undefined && threshold !== null && threshold !== '') {
+        const parsed = Number(threshold);
+        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 1000) {
+            return res.status(400).json({ error: 'Threshold must be an integer between 1 and 1000' });
+        }
+        thresholdValue = parsed;
     }
 
     try {
@@ -30,9 +43,14 @@ router.post('/', (req, res) => {
             VALUES (?, ?, ?, 1)
         `);
 
-        insertStmt.run(uuidv4(), keyword.toLowerCase().trim(), threshold || 3);
+        const normalizedKeyword = keyword.toLowerCase().trim();
+        if (!normalizedKeyword) {
+            return res.status(400).json({ error: 'Keyword is required' });
+        }
 
-        const newWatchlist = db.prepare('SELECT * FROM watchlists WHERE keyword = ?').get(keyword.toLowerCase().trim());
+        insertStmt.run(uuidv4(), normalizedKeyword, thresholdValue);
+
+        const newWatchlist = db.prepare('SELECT * FROM watchlists WHERE keyword = ?').get(normalizedKeyword);
         res.status(201).json(newWatchlist);
     } catch (err) {
         if (err.message.includes('UNIQUE constraint failed')) {

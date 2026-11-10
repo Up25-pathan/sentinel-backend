@@ -3,11 +3,87 @@ const crypto = require('crypto');
 const { resolveJwtSecret, isUnset } = require('../env');
 
 /**
- * Sanitize input — strip HTML tags and trim whitespace
+ * The only signing algorithm this service accepts.
+ *
+ * Neither sign nor verify previously pinned an algorithm, which leaves the
+ * token layer exposed to algorithm-confusion classes of bug. Pinning HS256 on
+ * both sides makes that impossible.
  */
-function sanitizeInput(str) {
-    if (typeof str !== 'string') return str;
-    return str.replace(/<[^>]*>/g, '').trim();
+const JWT_ALGORITHM = 'HS256';
+
+/**
+ * Token generation counter.
+ *
+ * Tokens used to be valid for 30 days with no revocation path at all: the only
+ * way to invalidate a leaked token was to rotate JWT_SECRET, which also forced
+ * every legitimate user to re-authenticate and, worse, is the same secret the
+ * server signs with — so it is not something you can do casually. Carrying a
+ * version claim means invalidating every outstanding token is now a one-value
+ * environment change that does not disturb signing.
+ */
+function currentTokenVersion() {
+    return String(process.env.TOKEN_VERSION || '1');
+}
+
+/**
+ * Verify a JWT and confirm it belongs to the current token generation.
+ * Used by both the HTTP middleware and the WebSocket upgrade handler so the two
+ * can never diverge on secret, algorithm or revocation rules.
+ */
+function verifyToken(token, secret) {
+    let key = secret;
+    if (!key) {
+        key = resolveJwtSecret();
+    }
+    const decoded = jwt.verify(token, key, { algorithms: [JWT_ALGORITHM] });
+
+    // Tokens minted before versioning existed carry no claim. Accept them only
+    // while the generation is still the default, so enabling versioning later
+    // still forces a clean re-authentication instead of silently keeping old
+    // tokens alive.
+    const presented = decoded.ver === undefined ? '1' : String(decoded.ver);
+    if (presented !== currentTokenVersion()) {
+        const err = new Error('Token has been revoked');
+        err.status = 401;
+        throw err;
+    }
+
+    return decoded;
+}
+
+const MAX_BODY_STRING_LENGTH = 10000;
+
+/**
+ * Normalize incoming string fields.
+ *
+ * This used to strip HTML tags from every top-level string. That was not
+ * encoding: it only covered depth 1, and it silently rewrote legitimate stored
+ * data — a Credential whose value legitimately contained `<` or `>` was mangled
+ * on the way into the database, which is worse than the XSS it was meant to
+ * prevent. Every server response is JSON and the service emits no HTML at all,
+ * so the correct defence is escaping at the render layer in the client.
+ *
+ * What is enforced here is only what cannot corrupt valid content: a length
+ * ceiling and removal of NUL / control characters.
+ */
+function normalizeString(value) {
+    if (typeof value !== 'string') return value;
+
+    let out = value;
+    // eslint-disable-next-line no-control-regex
+    out = out.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '');
+    if (out.length > MAX_BODY_STRING_LENGTH) {
+        out = out.slice(0, MAX_BODY_STRING_LENGTH);
+    }
+    return out.trim();
+}
+
+function normalizeBody(req) {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body) || Buffer.isBuffer(body)) return;
+    for (const key of Object.keys(body)) {
+        body[key] = normalizeString(body[key]);
+    }
 }
 
 /**
@@ -50,14 +126,7 @@ function authMiddleware(req, res, next) {
         return next();
     }
 
-    // Sanitize request body fields
-    if (req.body && typeof req.body === 'object') {
-        for (const key of Object.keys(req.body)) {
-            if (typeof req.body[key] === 'string') {
-                req.body[key] = sanitizeInput(req.body[key]);
-            }
-        }
-    }
+    normalizeBody(req);
 
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -78,8 +147,7 @@ function authMiddleware(req, res, next) {
 
     const token = authHeader.split(' ')[1];
     try {
-        const decoded = jwt.verify(token, secret);
-        req.user = decoded;
+        req.user = verifyToken(token, secret);
         next();
     } catch (err) {
         return res.status(401).json({ error: 'Invalid or expired token' });
@@ -95,17 +163,33 @@ function requireAdminRole(req, res, next) {
 
 /**
  * Security Headers Middleware — add defense headers to all responses
+ *
+ * X-XSS-Protection was dropped: it has been removed from every major browser and
+ * in old ones it could itself introduce vulnerabilities, so advertising it is
+ * pure noise. HSTS is only emitted over TLS, where it is actually meaningful;
+ * sending it on a plaintext response is ignored by browsers.
  */
 function securityHeaders(req, res, next) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
-    res.setHeader('X-XSS-Protection', '1; mode=block');
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+        res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    // Don't reveal server tech stack
     res.removeHeader('X-Powered-By');
     next();
 }
 
-module.exports = { authMiddleware, apiKeyMiddleware, requireAdminRole, securityHeaders };
+module.exports = {
+    authMiddleware,
+    apiKeyMiddleware,
+    requireAdminRole,
+    securityHeaders,
+    verifyToken,
+    currentTokenVersion,
+    JWT_ALGORITHM,
+    // Reused by the WebSocket upgrade handler in server.js: an upgrade bypasses
+    // the whole Express chain, so it has to re-check the API key by hand.
+    safeEqual,
+};

@@ -112,7 +112,23 @@ router.get('/vulns', (req, res) => {
 });
 
 // POST /api/intelligence/vulns/sync — force an immediate upstream refresh
+//
+// syncVulnerabilities() walks up to six NVD pages with 6.5s delays plus 25
+// sequential backfill requests. The scheduler guards against overlapping runs,
+// but the HTTP route had no equivalent, so N concurrent admin requests multiplied
+// upstream load N-fold and could push past NVD's unauthenticated ceiling — which
+// 403s the feed for everyone. One sync at a time; a second caller is told to wait.
+let vulnSyncInFlight = false;
+
 router.post('/vulns/sync', requireAdminRole, async (req, res) => {
+    if (vulnSyncInFlight) {
+        return res.status(429).json({
+            error: 'A vulnerability sync is already running. Try again shortly.',
+            in_progress: true,
+        });
+    }
+
+    vulnSyncInFlight = true;
     try {
         const result = await syncVulnerabilities();
         logAction('VULN_SYNC', `NVD ${result.nvd} CVEs, KEV ${result.kev} entries`);
@@ -120,6 +136,8 @@ router.post('/vulns/sync', requireAdminRole, async (req, res) => {
     } catch (err) {
         console.error('Vuln sync error:', err);
         res.status(500).json({ error: 'Vulnerability sync failed' });
+    } finally {
+        vulnSyncInFlight = false;
     }
 });
 
@@ -158,18 +176,88 @@ router.get('/macro', (req, res) => {
 });
 
 // POST /api/intelligence/chat — AI Chat Q&A
-router.post('/chat', async (req, res) => {
-    try {
-        const { question } = req.body;
-        if (!question || question.trim().length === 0) {
-            return res.status(400).json({ error: 'Question is required' });
-        }
+//
+// Three problems this now controls:
+//  1. Concurrency. chat() inherits the Groq SDK defaults of a 60s timeout and 2
+//     retries, so one request can hold a socket open for ~180s. With no cap, a
+//     handful of simultaneous questions exhausted the request pool.
+//  2. Quota. The shared AI_DAILY_BUDGET lived only in ai-analysis.js, so chat was
+//     entirely unbudgeted and the read-only analyst role could spend the org's
+//     Groq quota at the general limiter's 600 requests/minute.
+//  3. Per-caller fairness. The budget is now tracked per authenticated user, so
+//     one operator cannot lock everyone else out of the assistant.
+const CHAT_MAX_CONCURRENT = 4;
+const CHAT_MAX_QUESTION_LENGTH = 2000;
+const CHAT_PER_USER_BUDGET = parseInt(process.env.CHAT_DAILY_BUDGET) || 50;
+const CHAT_BUDGET_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-        const result = await chat(question.trim());
+let chatInFlight = 0;
+const chatUsage = new Map();
+
+function chatBudgetRemaining(username) {
+    const entry = chatUsage.get(username);
+    if (!entry) return CHAT_PER_USER_BUDGET;
+    if (Date.now() > entry.resetAt) {
+        chatUsage.delete(username);
+        return CHAT_PER_USER_BUDGET;
+    }
+    return Math.max(0, CHAT_PER_USER_BUDGET - entry.count);
+}
+
+function consumeChatBudget(username) {
+    const entry = chatUsage.get(username);
+    if (!entry || Date.now() > entry.resetAt) {
+        chatUsage.set(username, { count: 1, resetAt: Date.now() + CHAT_BUDGET_WINDOW_MS });
+        return;
+    }
+    entry.count += 1;
+}
+
+router.post('/chat', async (req, res) => {
+    const username = req.user?.username || 'anonymous';
+
+    if (chatInFlight >= CHAT_MAX_CONCURRENT) {
+        return res.status(429).json({
+            error: 'The assistant is handling other requests. Please retry in a moment.',
+            retry_after: 5,
+        });
+    }
+
+    if (chatBudgetRemaining(username) <= 0) {
+        return res.status(429).json({
+            error: `Daily assistant limit reached (${CHAT_PER_USER_BUDGET} questions). Try again tomorrow.`,
+            budget_exhausted: true,
+        });
+    }
+
+    let question;
+    try {
+        question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
+    } catch {
+        // A non-object body throws on property access; treat it as malformed
+        // input rather than letting it escape as a 500.
+        return res.status(400).json({ error: 'Question is required' });
+    }
+
+    if (!question) {
+        return res.status(400).json({ error: 'Question is required' });
+    }
+    if (question.length > CHAT_MAX_QUESTION_LENGTH) {
+        return res.status(400).json({
+            error: `Question is too long (max ${CHAT_MAX_QUESTION_LENGTH} characters).`
+        });
+    }
+
+    chatInFlight += 1;
+    consumeChatBudget(username);
+    try {
+        const result = await chat(question);
         res.json(result);
     } catch (err) {
         console.error('Chat error:', err);
         res.status(500).json({ error: 'Failed to process question' });
+    } finally {
+        chatInFlight -= 1;
     }
 });
 
@@ -548,7 +636,19 @@ router.get('/pattern', (req, res) => {
         `).all();
 
         // Correlations: pairs of entities frequently linked to the same recent events
-        const recentEvents = db.prepare(`SELECT id FROM events WHERE created_at > datetime('now', '-48 hours')`).all().map(e => e.id);
+        //
+        // This list previously had no LIMIT, so the generated `IN (...)` bind list
+        // grew with the events table — measured at 131 ms of synchronous event-loop
+        // block for 1,000 ids, and it would fail outright past SQLite's
+        // SQLITE_MAX_VARIABLE_NUMBER. Correlating the *most recent* events is the
+        // intent anyway, so cap the window explicitly.
+        const CORRELATION_EVENT_WINDOW = 500;
+        const recentEvents = db.prepare(`
+            SELECT id FROM events
+            WHERE created_at > datetime('now', '-48 hours')
+            ORDER BY created_at DESC
+            LIMIT ?
+        `).all(CORRELATION_EVENT_WINDOW).map(e => e.id);
         const placeholders = recentEvents.map(() => '?').join(',');
         
         let relatedPairs = [];

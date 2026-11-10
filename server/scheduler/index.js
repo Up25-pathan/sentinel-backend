@@ -120,7 +120,10 @@ function startScheduler() {
         console.log('─'.repeat(50));
         console.log(`[${new Date().toISOString()}] Running event clustering...`);
 
-        const clusterIds = clusterEvents();
+        // clusterEvents() is async: it yields to the event loop periodically so a
+        // long run cannot stall HTTP requests, SSE heartbeats or WebSocket
+        // broadcasts.
+        const clusterIds = await clusterEvents();
         console.log(`   ${clusterIds.length} clusters formed`);
 
         if (!isAiConfigured()) {

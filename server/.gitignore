@@ -1,3 +1,21 @@
 node_modules/
 .env
+.env.local
+
+# SQLite: the main database *and* its WAL/SHM sidecars. `db/*.db` alone does not
+# match geoint.db-wal / geoint.db-shm, and those sidecars contain live page
+# contents — including the `assets` table, which stores credentials.
 db/*.db
+db/*.db-wal
+db/*.db-shm
+*.db
+*.db-wal
+*.db-shm
+
+# Generated signing key. env.js persists a randomly generated JWT secret here
+# when JWT_SECRET is unset, so it must never be committed.
+.jwt_secret
+db/.jwt_secret
+
+# Logs
+*.log
