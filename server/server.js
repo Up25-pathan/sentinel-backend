@@ -586,7 +586,7 @@ app.use('/api/osint', authMiddleware, osintRoutes);
 app.use('/api/darkweb', authMiddleware, darkwebRoutes);
 app.use('/api/audit', authMiddleware, requireAdminRole, auditRoutes);
 app.use('/api/assets', authMiddleware, requireAdminRole, assetRoutes);
-app.use('/api/vault', authMiddleware, vaultRoutes);
+app.use('/api/vault', vaultRoutes);
 
 // ─── Seed Endpoint (protected, dev-only) ────────────────────────
 // db/seed.js inserts INVENTED geopolitical events, alerts and dark-web
