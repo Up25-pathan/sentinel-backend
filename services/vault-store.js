@@ -316,7 +316,7 @@ module.exports = {
     maxFileBytes,
     quotaBytes,
     getVault,
-    createVault,
+    ensureVault,
     listFiles,
     createFile,
     putChunk,
