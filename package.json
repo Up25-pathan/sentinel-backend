@@ -1,0 +1,10 @@
+{
+  "name": "sentinel-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SENTINEL backend server",
+  "scripts": {
+    "postinstall": "cd server && npm install",
+    "start": "node server/server.js"
+  }
+}
