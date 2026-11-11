@@ -131,6 +131,7 @@ const generalLimiter = rateLimit({
     // of which can land in the same window on a cold start. That produced 429s
     // that the UI reported as a broken feed. This is still far below abuse.
     max: 600,
+    skip: (req) => req.method === 'POST' && req.path === '/api/auth/login',
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: rateLimitKey,
@@ -147,19 +148,6 @@ const dataLimiter = rateLimit({
     legacyHeaders: false,
     keyGenerator: rateLimitKey,
     message: { error: 'Data feed rate limit reached, please retry shortly.' }
-});
-
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: rateLimitKey,
-    // A successful login must not consume the budget. Otherwise the desktop
-    // app — which authenticates once per launch — burns attempts and locks
-    // itself out of its own server after a handful of restarts.
-    skipSuccessfulRequests: true,
-    message: { error: 'Too many login attempts. Try again in 15 minutes.' }
 });
 
 // ─── Global Middleware ──────────────────────────────────────────
@@ -574,7 +562,7 @@ app.get('/api/map/aviation', authMiddleware, async (req, res) => {
 });
 
 // ─── Auth Routes ───────────────────────────────────────────────
-app.use('/api/auth', authLimiter, authRoutes);
+app.use('/api/auth', authRoutes);
 
 // ─── Protected Routes ──────────────────────────────────────────
 app.use('/api/events', authMiddleware, eventRoutes);
