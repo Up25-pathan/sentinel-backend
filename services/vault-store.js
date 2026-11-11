@@ -93,6 +93,19 @@ async function ensureSchema() {
             ON vault_files (vault_id, status, created_at DESC)
         `);
         await db.query(`
+            CREATE TABLE IF NOT EXISTS vault_folders (
+                id UUID PRIMARY KEY,
+                vault_id UUID NOT NULL REFERENCES vaults(id) ON DELETE CASCADE,
+                encrypted_meta TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        `);
+        await db.query(`
+            CREATE INDEX IF NOT EXISTS vault_folders_vault_idx
+            ON vault_folders (vault_id, created_at)
+        `);
+        await db.query(`
             CREATE TABLE IF NOT EXISTS vault_chunks (
                 file_id UUID NOT NULL REFERENCES vault_files(id) ON DELETE CASCADE,
                 chunk_index INTEGER NOT NULL,
@@ -149,6 +162,50 @@ async function listFiles(vaultId) {
         [vaultId]
     );
     return result.rows;
+}
+
+async function listFolders(vaultId) {
+    await ensureSchema();
+    const result = await getPool().query(
+        `SELECT id, encrypted_meta, created_at, updated_at
+         FROM vault_folders
+         WHERE vault_id = $1
+         ORDER BY created_at ASC`,
+        [vaultId]
+    );
+    return result.rows;
+}
+
+async function createFolder(vaultId, { id, encryptedMeta }) {
+    await ensureSchema();
+    const result = await getPool().query(
+        `INSERT INTO vault_folders (id, vault_id, encrypted_meta)
+         VALUES ($1, $2, $3)
+         RETURNING id, encrypted_meta, created_at, updated_at`,
+        [id, vaultId, encryptedMeta]
+    );
+    return result.rows[0];
+}
+
+async function updateFolderMeta(vaultId, folderId, encryptedMeta) {
+    await ensureSchema();
+    const result = await getPool().query(
+        `UPDATE vault_folders
+         SET encrypted_meta = $3, updated_at = now()
+         WHERE id = $1 AND vault_id = $2
+         RETURNING id`,
+        [folderId, vaultId, encryptedMeta]
+    );
+    return result.rowCount > 0;
+}
+
+async function deleteFolder(vaultId, folderId) {
+    await ensureSchema();
+    const result = await getPool().query(
+        'DELETE FROM vault_folders WHERE id = $1 AND vault_id = $2',
+        [folderId, vaultId]
+    );
+    return result.rowCount > 0;
 }
 
 async function createFile(vaultId, { id, encryptedMeta, sizePlain, chunkSize, chunkCount }) {
@@ -318,6 +375,10 @@ module.exports = {
     getVault,
     ensureVault,
     listFiles,
+    listFolders,
+    createFolder,
+    updateFolderMeta,
+    deleteFolder,
     createFile,
     putChunk,
     finalizeFile,
