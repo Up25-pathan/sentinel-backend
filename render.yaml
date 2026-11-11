@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: sentinel-backend
+    env: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: VAULT_DATABASE_URL
+        sync: false
+      - key: VAULT_PASSKEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: AUTH_USERNAME
+        sync: false
+      - key: AUTH_PASSWORD
+        sync: false
+      - key: API_SECRET_KEY
+        sync: false
