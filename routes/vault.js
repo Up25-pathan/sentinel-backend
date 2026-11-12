@@ -11,6 +11,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const SHA256_RE = /^[0-9a-f]{64}$/i;
 const MIN_CHUNK_BYTES = 64 * 1024;
 const MAX_CHUNK_BYTES = 2 * 1024 * 1024;
+const CHUNK_ENCRYPTION_OVERHEAD_BYTES = 29;
 const MAX_META_BYTES = 64 * 1024;
 const OWNER_ID = process.env.VAULT_OWNER_ID || 'vault';
 const DEFAULT_KDF_PARAMS = {
@@ -123,8 +124,8 @@ router.post('/auth', async (req, res, next) => {
                 updated_at: vault.updated_at,
                 file_count: Number(vault.file_count),
                 bytes_used: Number(vault.bytes_used),
-                quota_bytes: store.quotaBytes(),
-                max_file_bytes: store.maxFileBytes(),
+                quota_bytes: null,
+                max_file_bytes: null,
             },
         });
     } catch (err) {
@@ -149,8 +150,8 @@ router.get('/', async (req, res, next) => {
                 updated_at: vault.updated_at,
                 file_count: Number(vault.file_count),
                 bytes_used: Number(vault.bytes_used),
-                quota_bytes: store.quotaBytes(),
-                max_file_bytes: store.maxFileBytes(),
+                quota_bytes: null,
+                max_file_bytes: null,
             },
         });
     } catch (err) {
@@ -239,9 +240,9 @@ router.post('/files', async (req, res, next) => {
         const body = req.body || {};
         const id = readUuid(body.id, 'id');
         const encryptedMeta = readBase64(body.encrypted_meta, 'encrypted_meta', 1, MAX_META_BYTES);
-        const sizePlain = readInteger(body.size_plain, 'size_plain', 0, store.maxFileBytes());
+        const sizePlain = readInteger(body.size_plain, 'size_plain', 0, Number.MAX_SAFE_INTEGER);
         const chunkSize = readInteger(body.chunk_size, 'chunk_size', MIN_CHUNK_BYTES, MAX_CHUNK_BYTES);
-        const chunkCount = readInteger(body.chunk_count, 'chunk_count', 1, 16384);
+        const chunkCount = readInteger(body.chunk_count, 'chunk_count', 1, 2147483647);
         await store.createFile(vault.id, {
             id,
             encryptedMeta,
@@ -258,7 +259,7 @@ router.post('/files', async (req, res, next) => {
 
 router.put('/files/:id/chunks/:index', express.raw({
     type: 'application/octet-stream',
-    limit: MAX_CHUNK_BYTES,
+    limit: MAX_CHUNK_BYTES + CHUNK_ENCRYPTION_OVERHEAD_BYTES,
 }), async (req, res, next) => {
     try {
         const vault = await store.getVault(OWNER_ID);

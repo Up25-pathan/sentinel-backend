@@ -3,21 +3,7 @@ const { Pool } = require('pg');
 
 let pool = null;
 let schemaPromise = null;
-
-function intEnv(name, fallback, min, max) {
-    const raw = process.env[name];
-    const value = raw === undefined ? fallback : Number.parseInt(raw, 10);
-    if (!Number.isInteger(value) || value < min || value > max) return fallback;
-    return value;
-}
-
-function maxFileBytes() {
-    return intEnv('VAULT_MAX_FILE_BYTES', 100 * 1024 * 1024, 1024, 512 * 1024 * 1024);
-}
-
-function quotaBytes() {
-    return intEnv('VAULT_QUOTA_BYTES', 900 * 1024 * 1024, 1024 * 1024, 1024 * 1024 * 1024);
-}
+const CHUNK_ENCRYPTION_OVERHEAD_BYTES = 29;
 
 function isConfigured() {
     return Boolean(process.env.VAULT_DATABASE_URL && String(process.env.VAULT_DATABASE_URL).trim());
@@ -213,9 +199,6 @@ async function deleteFolder(vaultId, folderId) {
 
 async function createFile(vaultId, { id, encryptedMeta, sizePlain, chunkSize, chunkCount }) {
     await ensureSchema();
-    if (sizePlain > maxFileBytes()) {
-        throw httpError(413, `File exceeds the ${Math.floor(maxFileBytes() / (1024 * 1024))} MB limit`);
-    }
     const expectedChunks = Math.max(1, Math.ceil(sizePlain / chunkSize));
     if (chunkCount !== expectedChunks) throw httpError(400, 'Chunk count does not match file size');
 
@@ -231,14 +214,6 @@ async function createFile(vaultId, { id, encryptedMeta, sizePlain, chunkSize, ch
              WHERE vault_id = $1 AND status = 'pending' AND created_at < now() - interval '1 day'`,
             [vaultId]
         );
-
-        const used = await client.query(
-            `SELECT COALESCE(SUM(size_plain), 0)::bigint AS used FROM vault_files WHERE vault_id = $1`,
-            [vaultId]
-        );
-        if (BigInt(used.rows[0].used) + BigInt(sizePlain) > BigInt(quotaBytes())) {
-            throw httpError(507, 'Vault storage quota exceeded');
-        }
 
         await client.query(
             `INSERT INTO vault_files
@@ -267,7 +242,10 @@ async function putChunk(vaultId, fileId, index, data) {
     if (!file.rowCount) throw httpError(404, 'Pending file not found');
     const { chunk_count: chunkCount, chunk_size: chunkSize } = file.rows[0];
     if (index < 0 || index >= chunkCount) throw httpError(400, 'Chunk index out of range');
-    if (!Buffer.isBuffer(data) || data.length > chunkSize) throw httpError(413, 'Chunk is too large');
+    if (!Buffer.isBuffer(data)
+        || data.length > chunkSize + CHUNK_ENCRYPTION_OVERHEAD_BYTES) {
+        throw httpError(413, 'Chunk is too large');
+    }
 
     await db.query(
         `INSERT INTO vault_chunks (file_id, chunk_index, data)
@@ -373,8 +351,6 @@ async function close() {
 
 module.exports = {
     isConfigured,
-    maxFileBytes,
-    quotaBytes,
     getVault,
     ensureVault,
     listFiles,
