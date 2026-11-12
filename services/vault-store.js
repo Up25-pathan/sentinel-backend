@@ -49,6 +49,9 @@ function getPool() {
             max: 4,
             idleTimeoutMillis: 30_000,
             connectionTimeoutMillis: 10_000,
+            statement_timeout: 25_000,
+            query_timeout: 30_000,
+            idle_in_transaction_session_timeout: 15_000,
         });
         pool.on('error', (err) => {
             console.error('Vault PostgreSQL pool error:', err.message);

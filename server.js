@@ -131,7 +131,8 @@ const generalLimiter = rateLimit({
     // of which can land in the same window on a cold start. That produced 429s
     // that the UI reported as a broken feed. This is still far below abuse.
     max: 600,
-    skip: (req) => req.method === 'POST' && req.path === '/api/auth/login',
+    skip: (req) => req.method === 'POST'
+        && (req.path === '/api/auth/login' || req.path === '/api/vault/auth'),
     standardHeaders: true,
     legacyHeaders: false,
     keyGenerator: rateLimitKey,
@@ -629,9 +630,15 @@ app.use((err, req, res, next) => {
     // traces and no root cause could be recovered.
     console.error(`❌ ${req.method} ${req.originalUrl} — ${err.message}`);
     if (err.stack) console.error(err.stack);
-    res.status(err.status || 500).json({
-        error: err.status && err.status < 500 ? err.message : 'Internal server error',
-    });
+    const vaultStorageTimeout = req.path.startsWith('/api/vault/')
+        && (err.code === '57014'
+            || ['ECONNRESET', 'ETIMEDOUT', '57P01', '57P03', '53300'].includes(err.code)
+            || /timeout/i.test(err.message || ''));
+    const status = err.status || (vaultStorageTimeout ? 503 : 500);
+    const message = vaultStorageTimeout
+        ? 'Vault storage is temporarily unavailable; retry shortly.'
+        : status < 500 ? err.message : 'Internal server error';
+    res.status(status).json({ error: message });
 });
 
 // ─── Start Server ──────────────────────────────────────────────

@@ -1,5 +1,4 @@
 const express = require('express');
-const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const { isUnset } = require('../env');
 const { safeEqual } = require('../middleware/auth');
@@ -28,14 +27,15 @@ function httpError(status, message) {
     return err;
 }
 
-function requirePasskey(req) {
+function requirePasskey(req, res, next) {
     if (isUnset(process.env.VAULT_PASSKEY)) {
-        throw httpError(503, 'Vault passkey is not configured on the server');
+        return next(httpError(503, 'Vault passkey is not configured on the server'));
     }
     const passkey = req.headers['x-vault-passkey'];
     if (!passkey || !safeEqual(String(passkey), process.env.VAULT_PASSKEY)) {
-        throw httpError(401, 'Invalid vault passkey');
+        return next(httpError(401, 'Invalid vault passkey'));
     }
+    return next();
 }
 
 function readUuid(value, field) {
@@ -90,15 +90,7 @@ function serialiseFolder(row) {
     };
 }
 
-const vaultAuthLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 30,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many vault unlock attempts, please retry shortly.' }
-});
-
-router.post('/auth', vaultAuthLimiter, async (req, res, next) => {
+router.post('/auth', async (req, res, next) => {
     try {
         const body = req.body || {};
         const passkey = String(body.passkey || '');
