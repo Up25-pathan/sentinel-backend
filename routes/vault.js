@@ -189,16 +189,24 @@ router.get('/folders', async (req, res, next) => {
 });
 
 router.post('/folders', async (req, res, next) => {
+    const startedAt = Date.now();
+    let stage = 'vault lookup';
+    console.info('[vault] Folder create request started');
     try {
         const vault = await store.getVault(OWNER_ID);
         if (!vault) return res.status(404).json({ error: 'No vault exists for this account' });
+        stage = 'folder insert';
         const body = req.body || {};
         const id = readUuid(body.id, 'id');
         const encryptedMeta = readBase64(body.encrypted_meta, 'encrypted_meta', 1, MAX_META_BYTES);
         const folder = await store.createFolder(vault.id, { id, encryptedMeta });
+        console.info(`[vault] Folder create completed in ${Date.now() - startedAt}ms`);
         logAction('VAULT_FOLDER_CREATE', `Created folder ${id}`);
         res.status(201).json({ folder: serialiseFolder(folder) });
     } catch (err) {
+        console.error(
+            `[vault] Folder create failed during ${stage} after ${Date.now() - startedAt}ms: ${err.message}`
+        );
         next(err);
     }
 });
